@@ -14,6 +14,7 @@
 <script src="smartclient/system/modules/ISC_Containers.js"></script>
 <script src="smartclient/system/modules/ISC_Forms.js"></script>
 <script src="smartclient/skins/Tahoe/load_skin.js"></script>
+<script src="lib/qrcode.min.js"></script>
 </head>
 <body>
 <script>
@@ -149,42 +150,143 @@ async function recalc() {
   }
 }
 
-async function saveLink() {
-  await saveRecent(getInput(), calculate(getInput()));
-  // Update hash explicitly to be sure address bar has it
-  const hash = await encodeScenario(getInput());
-  const url = location.origin + location.pathname + '#i=' + hash;
-  copyToClipboard(url);
-  flashStatus('Live link copied — re-runs calc on open');
-}
-
-async function saveSnapshot() {
-  const input = getInput();
-  const out = calculate(input);
-  await saveRecent(input, out);
-  const hash = await encodeScenario(input, {
-    monthly: out.monthly, total: out.total, interest: out.interest, pmi: out.pmi,
-  });
-  const url = location.origin + location.pathname + '#z=' + hash;
-  copyToClipboard(url);
-  flashStatus('Snapshot copied — recipient sees these exact numbers');
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function copyToClipboard(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(() => {});
+    return navigator.clipboard.writeText(text);
+  }
+  return Promise.reject(new Error('clipboard unavailable'));
+}
+
+async function nativeShare(url, title, text) {
+  if (!navigator.share) return false;
+  try {
+    await navigator.share({ url, title, text });
+    return true;
+  } catch (e) {
+    if (e.name === 'AbortError') return true; // user cancelled — that's fine
+    return false;
   }
 }
 
-function flashStatus(msg) {
-  shareStatus.setContents(`<span style='color:#2e7d32;'>${msg}</span>`);
-  setTimeout(() => shareStatus.setContents(''), 4000);
+// Build the QR data-uri image tag for any URL.
+function buildQrImg(url) {
+  // Pick the smallest QR version that fits, error correction M (~15% damage tolerance).
+  // qrcode-generator picks version automatically when typeNumber=0.
+  const qr = qrcode(0, 'M');
+  qr.addData(url);
+  qr.make();
+  // cellSize=4, margin=2 → ~150-200px image for our URL sizes
+  return qr.createImgTag(4, 8);
+}
+
+// Open the share modal. mode = 'live' (input only, re-runs on open)
+//                            'snapshot' (input + frozen output)
+async function openShare(mode) {
+  const input = getInput();
+  const out = calculate(input);
+  if (!out) {
+    isc.warn('Enter loan details first.');
+    return;
+  }
+
+  // Build URL
+  const payload = mode === 'snapshot'
+    ? await encodeScenario(input, { monthly: out.monthly, total: out.total, interest: out.interest, pmi: out.pmi })
+    : await encodeScenario(input);
+  const url = location.origin + location.pathname + '#' + (mode === 'snapshot' ? 'z' : 'i') + '=' + payload;
+
+  // Save to recents either way (sharing is also "I want to remember this")
+  await saveRecent(input, out);
+
+  const title = 'Mortgage scenario';
+  const labelText = mode === 'snapshot'
+    ? `Snapshot · ${url.length} chars · recipient sees the captured monthly`
+    : `Live link · ${url.length} chars · recalculates on open`;
+
+  const imgTag = buildQrImg(url);
+  const hasNativeShare = !!navigator.share;
+
+  // Compose the modal content as HTMLFlow + buttons row
+  // Use a SC Window with members.
+  const win = isc.Window.create({
+    title: 'Share scenario',
+    width: 380,
+    height: 460,
+    autoCenter: true,
+    isModal: true,
+    showModalMask: true,
+    canDragResize: false,
+    showMaximizeButton: false,
+    showMinimizeButton: false,
+    closeClick: function () { this.destroy(); },
+    items: [
+      isc.VLayout.create({
+        width: '100%', height: '100%', padding: 16, membersMargin: 10,
+        members: [
+          isc.Label.create({
+            width: '100%', height: 200, align: 'center',
+            contents: "<div style='text-align:center;'>" + imgTag + "</div>"
+          }),
+          isc.Label.create({
+            width: '100%', height: 30, align: 'center',
+            contents: "<div style='font-size:11px;color:#666;line-height:1.4;'>" + escapeHtml(labelText) + "</div>"
+          }),
+          isc.Label.create({
+            width: '100%', height: 60,
+            contents:
+              "<input type='text' id='shareUrlInput' value='" + escapeHtml(url) + "' readonly " +
+              "onclick='this.select();' " +
+              "style='width:100%;padding:6px;font-family:monospace;font-size:11px;border:1px solid #ccc;border-radius:3px;' />"
+          }),
+          isc.HLayout.create({
+            width: '100%', height: 32, membersMargin: 8, align: 'center',
+            members: [
+              isc.Button.create({
+                title: 'Copy URL', width: 100,
+                click: function () {
+                  copyToClipboard(url).then(
+                    function () { isc.say('Copied to clipboard'); },
+                    function () { isc.warn('Copy failed — select the URL above and copy manually.'); }
+                  );
+                }
+              }),
+              isc.Button.create({
+                title: hasNativeShare ? 'Native share…' : 'Share unavailable',
+                width: 130,
+                disabled: !hasNativeShare,
+                click: function () {
+                  nativeShare(url, title, mode === 'snapshot' ? 'See this mortgage scenario' : 'Mortgage calculator link');
+                }
+              }),
+              isc.Button.create({
+                title: 'Close', width: 70,
+                click: function () { win.destroy(); }
+              })
+            ]
+          }),
+          isc.Label.create({
+            width: '100%', height: 30,
+            contents: "<div style='font-size:10px;color:#888;line-height:1.4;'>" +
+              "Scan QR with your phone camera to open on mobile. " +
+              "On mobile, <b>Native share</b> opens iMessage/SMS/Mail/AirDrop." +
+              "</div>"
+          })
+        ]
+      })
+    ]
+  });
+  win.show();
 }
 
 function rebuildRecents() {
   const recents = getRecents();
   if (recents.length === 0) {
-    recentsList.setContents("<em style='color:#888;font-size:12px;'>No saved scenarios yet. Click \"Save Link\" or \"Share Snapshot\" above.</em>");
+    recentsList.setContents("<em style='color:#888;font-size:12px;'>No saved scenarios yet. Click \"Share Live Link\" or \"Share Snapshot\" above.</em>");
     return;
   }
   const rows = recents.map((r) => {
@@ -257,9 +359,10 @@ isc.VLayout.create({
       height: 32,
       membersMargin: 6,
       members: [
-        isc.Button.create({ title: "Save Link",       width: 120, click: saveLink }),
-        isc.Button.create({ title: "Share Snapshot",  width: 140, click: saveSnapshot }),
-        isc.Label.create({ ID: "shareStatus", width: "*", padding: 4, contents: "" })
+        isc.Button.create({ title: "Share Live Link",  width: 140, click: function() { openShare('live'); } }),
+        isc.Button.create({ title: "Share Snapshot",   width: 140, click: function() { openShare('snapshot'); } }),
+        isc.Label.create({ width: "*", padding: 4,
+          contents: "<div style='font-size:11px;color:#888;'>QR + Copy + Native share</div>" })
       ]
     }),
     isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:#888;'>Recent scenarios (this device)</div>" }),
