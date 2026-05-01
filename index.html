@@ -414,16 +414,17 @@ isc.VLayout.create({
     }),
     isc.Label.create({ ID: "result", height: 80, padding: 4, overflow: "hidden", contents: "" }),
     isc.HLayout.create({
+      ID: "actionBar",
       height: 32,
       membersMargin: 6,
       members: [
-        isc.Button.create({ title: "Calculate", width: 100,
+        isc.Button.create({ ID: "btnCalc",        title: "Calculate",     width: 100,
           click: function() { recalc(); refreshStatus(); } }),
-        isc.Button.create({ title: "Save",      width: 80,
+        isc.Button.create({ ID: "btnSave",        title: "Save",          width: 80,
           click: function() { saveScenario(); } }),
-        isc.Button.create({ title: "Share Live",     width: 100,
+        isc.Button.create({ ID: "btnShareLive",   title: "Share Live",    width: 100,
           click: function() { openShare('live'); } }),
-        isc.Button.create({ title: "Share Snapshot", width: 130,
+        isc.Button.create({ ID: "btnShareSnap",   title: "Share Snapshot", width: 130,
           click: function() { openShare('snapshot'); } })
       ]
     }),
