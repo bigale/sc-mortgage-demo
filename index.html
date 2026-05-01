@@ -120,12 +120,39 @@ function getInput() {
   };
 }
 
-async function recalc() {
+// Track the last-saved input so we can show "Modified" status when the
+// form drifts from what's encoded in the URL.
+let lastSavedInputJson = null;
+
+function isModified() {
+  if (lastSavedInputJson === null) return false;
+  return JSON.stringify(getInput()) !== lastSavedInputJson;
+}
+
+function setStatus(msg, kind /* 'info' | 'ok' | 'warn' */) {
+  const colors = { info: '#888', ok: '#2e7d32', warn: '#c75300' };
+  const c = colors[kind || 'info'];
+  shareStatus.setContents(msg
+    ? `<span style='color:${c};font-size:12px;'>${escapeHtml(msg)}</span>`
+    : '');
+}
+
+function refreshStatus() {
+  if (lastSavedInputJson === null) {
+    setStatus('Click Calculate to see the math; click Save to capture as a shareable link.', 'info');
+  } else if (isModified()) {
+    setStatus('Modified — click Save to update the link.', 'warn');
+  } else {
+    setStatus('Saved — URL in address bar reflects this scenario. Use Share to send it.', 'ok');
+  }
+}
+
+function recalc() {
   const input = getInput();
   const out = calculate(input);
   if (!out) {
-    result.setContents("<div style='color:#888;font-size:13px;'>Enter loan amount, rate, and term.</div>");
-    return;
+    result.setContents("<div style='color:#888;font-size:13px;'>Enter loan amount, rate, and term, then click Calculate.</div>");
+    return null;
   }
   const fmt0 = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 0 });
   const fmt2 = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -141,13 +168,21 @@ async function recalc() {
       `Interest: <b>$${fmt0(out.interest)}</b>` +
     `</div>` + pmiLine
   );
+  return out;
+}
 
-  // Update the URL hash silently — preserves browser back/forward, lets the
-  // user copy from address bar at any time.
-  if (!suppressUrlUpdate) {
-    const hash = await encodeScenario(input);
-    history.replaceState(null, '', '#i=' + hash);
-  }
+// Save action: commits current form values as the canonical scenario.
+// Updates URL hash, adds to recents, clears the modified state.
+async function saveScenario() {
+  const input = getInput();
+  const out = recalc(); // make sure result panel matches
+  if (!out) { setStatus('Fill in all fields before saving.', 'warn'); return null; }
+  const hash = await encodeScenario(input);
+  history.replaceState(null, '', '#i=' + hash);
+  await saveRecent(input, out);
+  lastSavedInputJson = JSON.stringify(input);
+  refreshStatus();
+  return { input, out, url: location.origin + location.pathname + '#i=' + hash };
 }
 
 function escapeHtml(s) {
@@ -186,7 +221,16 @@ function buildQrImg(url) {
 
 // Open the share modal. mode = 'live' (input only, re-runs on open)
 //                            'snapshot' (input + frozen output)
+//
+// Requires a saved scenario. If the form is unsaved/modified, prompt to
+// save first — sharing should always reflect a deliberate snapshot of state.
 async function openShare(mode) {
+  if (lastSavedInputJson === null || isModified()) {
+    isc.confirm('Save current values first?', function (ok) {
+      if (ok) saveScenario().then(function () { openShare(mode); });
+    });
+    return;
+  }
   const input = getInput();
   const out = calculate(input);
   if (!out) {
@@ -199,9 +243,6 @@ async function openShare(mode) {
     ? await encodeScenario(input, { monthly: out.monthly, total: out.total, interest: out.interest, pmi: out.pmi })
     : await encodeScenario(input);
   const url = location.origin + location.pathname + '#' + (mode === 'snapshot' ? 'z' : 'i') + '=' + payload;
-
-  // Save to recents either way (sharing is also "I want to remember this")
-  await saveRecent(input, out);
 
   const title = 'Mortgage scenario';
   const labelText = mode === 'snapshot'
@@ -296,14 +337,16 @@ async function openShare(mode) {
 function rebuildRecents() {
   const recents = getRecents();
   if (recents.length === 0) {
-    recentsList.setContents("<em style='color:#888;font-size:12px;'>No saved scenarios yet. Click \"Share Live Link\" or \"Share Snapshot\" above.</em>");
+    recentsList.setContents("<em style='color:#888;font-size:12px;'>No saved scenarios yet. Click <b>Save</b> after calculating.</em>");
     return;
   }
   const rows = recents.map((r) => {
     const monthly = r.monthly ? `$${r.monthly.toLocaleString('en-US', { maximumFractionDigits: 0 })}/mo` : '';
-    return `<a href='#i=${r.hash}' onclick='restoreFromHash();return false;' ` +
+    // Setting location.hash triggers hashchange -> restoreFromHash, which
+    // populates the form, recalcs, and updates status all in one path.
+    return `<a href='javascript:location.hash="i=${r.hash}"' ` +
            `style='display:flex;justify-content:space-between;padding:4px 8px;text-decoration:none;color:#333;border-bottom:1px solid #eee;'>` +
-           `<span>${r.label}</span><span style='color:#1976d2;'>${monthly}</span></a>`;
+           `<span>${escapeHtml(r.label)}</span><span style='color:#1976d2;'>${escapeHtml(monthly)}</span></a>`;
   }).join('');
   recentsList.setContents(rows);
 }
@@ -311,22 +354,25 @@ function rebuildRecents() {
 async function restoreFromHash() {
   const parsed = await parseHash();
   if (!parsed) return false;
-  suppressUrlUpdate = true;
-  calcForm.setValues({
+  const restoredInput = {
     principal:   parsed.i.principal || 0,
     downPayment: parsed.i.downPayment || 0,
     rate:        parsed.i.rate || 0,
     years:       parsed.i.years || 0,
-  });
-  await recalc();
-  suppressUrlUpdate = false;
+  };
+  calcForm.setValues(restoredInput);
+  recalc();
+  // Mark this as the saved baseline — edits-against-it will trigger Modified.
+  lastSavedInputJson = JSON.stringify(restoredInput);
+  refreshStatus();
   if (parsed.mode === 'snapshot' && parsed.o) {
     const captured = new Date(parsed.t).toLocaleString();
     snapshotBanner.setContents(
       `<div style='background:#fff8e1;border-left:3px solid #f57c00;padding:6px 10px;font-size:12px;color:#5d4037;'>` +
       `<b>Snapshot</b> captured ${captured}. ` +
       `Sender's monthly was <b>$${parsed.o.monthly.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}</b>. ` +
-      `Live recompute shown above (any rate/value changes since then would shift it).` +
+      `Live recompute shown above (any rate/value changes since then would shift it). ` +
+      `Edit + Save to capture your own variant.` +
       `</div>`
     );
     snapshotBanner.show();
@@ -357,11 +403,13 @@ isc.VLayout.create({
       colWidths: [160, "*"],
       titleOrientation: "left",
       autoFocus: true,
+      // Each edit just flags Modified — no auto-recalc, no auto-URL-update.
+      // The user drives compute + save explicitly via the buttons below.
       fields: [
-        { name: "principal",   title: "Home Price ($)",     type: "float",   defaultValue: 350000, change: recalc, keyPress: recalc },
-        { name: "downPayment", title: "Down Payment ($)",   type: "float",   defaultValue: 50000,  change: recalc, keyPress: recalc },
-        { name: "rate",        title: "Interest Rate (%)",  type: "float",   defaultValue: 7.0,    change: recalc, keyPress: recalc },
-        { name: "years",       title: "Term (years)",       type: "integer", defaultValue: 30,     change: recalc, keyPress: recalc }
+        { name: "principal",   title: "Home Price ($)",     type: "float",   defaultValue: 350000, change: refreshStatus },
+        { name: "downPayment", title: "Down Payment ($)",   type: "float",   defaultValue: 50000,  change: refreshStatus },
+        { name: "rate",        title: "Interest Rate (%)",  type: "float",   defaultValue: 7.0,    change: refreshStatus },
+        { name: "years",       title: "Term (years)",       type: "integer", defaultValue: 30,     change: refreshStatus }
       ]
     }),
     isc.Label.create({ ID: "result", height: 80, padding: 4, overflow: "hidden", contents: "" }),
@@ -369,12 +417,17 @@ isc.VLayout.create({
       height: 32,
       membersMargin: 6,
       members: [
-        isc.Button.create({ title: "Share Live Link",  width: 140, click: function() { openShare('live'); } }),
-        isc.Button.create({ title: "Share Snapshot",   width: 140, click: function() { openShare('snapshot'); } }),
-        isc.Label.create({ width: "*", padding: 4,
-          contents: "<div style='font-size:11px;color:#888;'>QR + Copy + Native share</div>" })
+        isc.Button.create({ title: "Calculate", width: 100,
+          click: function() { recalc(); refreshStatus(); } }),
+        isc.Button.create({ title: "Save",      width: 80,
+          click: function() { saveScenario(); } }),
+        isc.Button.create({ title: "Share Live",     width: 100,
+          click: function() { openShare('live'); } }),
+        isc.Button.create({ title: "Share Snapshot", width: 130,
+          click: function() { openShare('snapshot'); } })
       ]
     }),
+    isc.Label.create({ ID: "shareStatus", width: "100%", height: 22, padding: 2, contents: "" }),
     isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:#888;'>Recent scenarios (this device)</div>" }),
     isc.Label.create({ ID: "recentsList", height: 200, overflow: "auto", padding: 0, contents: "" })
   ]
@@ -382,7 +435,11 @@ isc.VLayout.create({
 
 (async function init() {
   const restored = await restoreFromHash();
-  if (!restored) await recalc();
+  if (!restored) {
+    // Fresh load — show defaults but don't auto-calculate. The user drives
+    // the first compute via the Calculate button.
+    refreshStatus();
+  }
   rebuildRecents();
 })();
 
