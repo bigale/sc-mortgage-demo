@@ -429,7 +429,11 @@ isc.VLayout.create({
     }),
     isc.Label.create({ ID: "shareStatus", width: "100%", height: 22, padding: 2, contents: "" }),
     isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:#888;'>Recent scenarios (this device)</div>" }),
-    isc.Label.create({ ID: "recentsList", height: 200, overflow: "auto", padding: 0, contents: "" })
+    // Label defaults to valign:"center" — that pushes a single recent row
+    // to the middle of a 200px box. Force top-align so rows stack downward
+    // as they're added.
+    isc.Label.create({ ID: "recentsList", height: 200, overflow: "auto",
+                       padding: 0, valign: "top", align: "left", contents: "" })
   ]
 });
 
