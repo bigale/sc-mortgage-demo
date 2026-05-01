@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mortgage Calculator</title>
+<meta name="description" content="Free mortgage calculator. Save and share scenarios via URL — no account, no tracking. Down payment, PMI, monthly payment, total interest.">
+<meta property="og:title" content="Mortgage Calculator — share scenarios via URL">
+<meta property="og:description" content="Free mortgage calculator with shareable URLs. No account required.">
 <link rel="icon" href="data:,">
 <script>var isomorphicDir = "smartclient/";</script>
 <script src="smartclient/system/modules/ISC_Core.js"></script>
@@ -14,61 +17,263 @@
 </head>
 <body>
 <script>
-function recalc() {
-  var v = calcForm.getValues();
-  var p = parseFloat(v.principal) || 0;
-  var rate = parseFloat(v.rate) || 0;
-  var years = parseInt(v.years, 10) || 0;
-  var r = rate / 100 / 12;
-  var n = years * 12;
-  if (p <= 0 || r <= 0 || n <= 0) {
+// ---- Scenario encoding (per EDGE_SUBSTRATE_ARCHITECTURE.md) -------------
+// Hash-based state on a real route. Hash is never sent to the edge or any
+// log. CompressionStream + base64url — no library deps.
+
+const ALGO_VERSION = 1;
+
+function b64urlEncode(uint8) {
+  let s = '';
+  for (let i = 0; i < uint8.length; i++) s += String.fromCharCode(uint8[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64urlDecode(str) {
+  const b64 = str.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((str.length + 3) & 3);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function gzipStr(str) {
+  const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function gunzipBytes(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return await new Response(stream).text();
+}
+
+async function encodeScenario(input, output) {
+  const blob = { i: input, t: Date.now(), v: ALGO_VERSION };
+  if (output) blob.o = output;
+  const gz = await gzipStr(JSON.stringify(blob));
+  return b64urlEncode(gz);
+}
+async function decodeScenario(b64url) {
+  const gz = b64urlDecode(b64url);
+  const json = await gunzipBytes(gz);
+  return JSON.parse(json);
+}
+
+// Parse the hash. Two modes:
+//   #i=<base64url>   live  — input-only, re-run on open
+//   #z=<base64url>   snap  — input + frozen output
+async function parseHash() {
+  const h = location.hash.slice(1);
+  if (!h) return null;
+  const eqIdx = h.indexOf('=');
+  if (eqIdx < 0) return null;
+  const key = h.slice(0, eqIdx), val = h.slice(eqIdx + 1);
+  if (key !== 'i' && key !== 'z') return null;
+  try {
+    const parsed = await decodeScenario(val);
+    return { mode: key === 'z' ? 'snapshot' : 'live', ...parsed };
+  } catch (e) { return null; }
+}
+
+// ---- Recents (localStorage, S1 of the persistence ladder) ----------------
+const RECENTS_KEY = 'sc-mortgage:recents:v1';
+function getRecents() {
+  try { return JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]'); }
+  catch { return []; }
+}
+async function saveRecent(input, output) {
+  const recents = getRecents();
+  const hash = await encodeScenario(input);
+  const label = `$${input.principal.toLocaleString()} @ ${input.rate}% × ${input.years}y`;
+  const entry = { hash, label, ts: Date.now(), monthly: output.monthly };
+  // Dedupe by label (last write wins), cap at 8
+  const filtered = recents.filter((r) => r.label !== label);
+  filtered.unshift(entry);
+  localStorage.setItem(RECENTS_KEY, JSON.stringify(filtered.slice(0, 8)));
+  rebuildRecents();
+}
+
+// ---- Math ------------------------------------------------------------------
+function calculate(input) {
+  const p = input.principal, dp = input.downPayment || 0;
+  const loan = Math.max(0, p - dp);
+  const r = input.rate / 100 / 12;
+  const n = input.years * 12;
+  if (loan <= 0 || r <= 0 || n <= 0) return null;
+  const monthly = (loan * r) / (1 - Math.pow(1 + r, -n));
+  const total = monthly * n;
+  const interest = total - loan;
+  // PMI: typical lender estimate ~0.5%/yr of loan when down < 20%
+  const dpPct = p > 0 ? (dp / p) : 0;
+  const pmi = dpPct < 0.20 ? (loan * 0.005 / 12) : 0;
+  return { monthly, total, interest, loan, dpPct, pmi };
+}
+
+// ---- UI --------------------------------------------------------------------
+let suppressUrlUpdate = false;
+
+function getInput() {
+  const v = calcForm.getValues();
+  return {
+    principal:    parseFloat(v.principal) || 0,
+    downPayment:  parseFloat(v.downPayment) || 0,
+    rate:         parseFloat(v.rate) || 0,
+    years:        parseInt(v.years, 10) || 0,
+  };
+}
+
+async function recalc() {
+  const input = getInput();
+  const out = calculate(input);
+  if (!out) {
     result.setContents("<div style='color:#888;font-size:13px;'>Enter loan amount, rate, and term.</div>");
     return;
   }
-  var pmt = (p * r) / (1 - Math.pow(1 + r, -n));
-  var total = pmt * n;
-  var interest = total - p;
+  const fmt0 = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const fmt2 = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+  const pmiLine = out.pmi > 0
+    ? `<div style='color:#a05; font-size:12px; margin-top:4px;'>PMI estimate: <b>+$${fmt2(out.pmi)}/mo</b> (down payment ${(out.dpPct * 100).toFixed(0)}% &lt; 20%)</div>`
+    : '';
   result.setContents(
-    "<div style='font-size:24px;color:#1976d2;font-weight:600;'>$" +
-    pmt.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 }) +
-    " <span style='font-size:14px;color:#666;font-weight:400;'>/ month</span></div>" +
-    "<div style='margin-top:8px;font-size:13px;color:#555;'>" +
-      "Total paid: <b>$" + total.toLocaleString('en-US', { maximumFractionDigits: 0 }) + "</b> &middot; " +
-      "Interest: <b>$" + interest.toLocaleString('en-US', { maximumFractionDigits: 0 }) + "</b>" +
-    "</div>"
+    `<div style='font-size:24px;color:#1976d2;font-weight:600;'>$${fmt2(out.monthly)}` +
+    `<span style='font-size:14px;color:#666;font-weight:400;'> / month P&I</span></div>` +
+    `<div style='margin-top:6px;font-size:13px;color:#555;'>` +
+      `Loan: <b>$${fmt0(out.loan)}</b> &middot; ` +
+      `Total paid: <b>$${fmt0(out.total)}</b> &middot; ` +
+      `Interest: <b>$${fmt0(out.interest)}</b>` +
+    `</div>` + pmiLine
   );
+
+  // Update the URL hash silently — preserves browser back/forward, lets the
+  // user copy from address bar at any time.
+  if (!suppressUrlUpdate) {
+    const hash = await encodeScenario(input);
+    history.replaceState(null, '', '#i=' + hash);
+  }
 }
 
+async function saveLink() {
+  await saveRecent(getInput(), calculate(getInput()));
+  // Update hash explicitly to be sure address bar has it
+  const hash = await encodeScenario(getInput());
+  const url = location.origin + location.pathname + '#i=' + hash;
+  copyToClipboard(url);
+  flashStatus('Live link copied — re-runs calc on open');
+}
+
+async function saveSnapshot() {
+  const input = getInput();
+  const out = calculate(input);
+  await saveRecent(input, out);
+  const hash = await encodeScenario(input, {
+    monthly: out.monthly, total: out.total, interest: out.interest, pmi: out.pmi,
+  });
+  const url = location.origin + location.pathname + '#z=' + hash;
+  copyToClipboard(url);
+  flashStatus('Snapshot copied — recipient sees these exact numbers');
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+}
+
+function flashStatus(msg) {
+  shareStatus.setContents(`<span style='color:#2e7d32;'>${msg}</span>`);
+  setTimeout(() => shareStatus.setContents(''), 4000);
+}
+
+function rebuildRecents() {
+  const recents = getRecents();
+  if (recents.length === 0) {
+    recentsList.setContents("<em style='color:#888;font-size:12px;'>No saved scenarios yet. Click \"Save Link\" or \"Share Snapshot\" above.</em>");
+    return;
+  }
+  const rows = recents.map((r) => {
+    const monthly = r.monthly ? `$${r.monthly.toLocaleString('en-US', { maximumFractionDigits: 0 })}/mo` : '';
+    return `<a href='#i=${r.hash}' onclick='restoreFromHash();return false;' ` +
+           `style='display:flex;justify-content:space-between;padding:4px 8px;text-decoration:none;color:#333;border-bottom:1px solid #eee;'>` +
+           `<span>${r.label}</span><span style='color:#1976d2;'>${monthly}</span></a>`;
+  }).join('');
+  recentsList.setContents(rows);
+}
+
+async function restoreFromHash() {
+  const parsed = await parseHash();
+  if (!parsed) return false;
+  suppressUrlUpdate = true;
+  calcForm.setValues({
+    principal:   parsed.i.principal || 0,
+    downPayment: parsed.i.downPayment || 0,
+    rate:        parsed.i.rate || 0,
+    years:       parsed.i.years || 0,
+  });
+  await recalc();
+  suppressUrlUpdate = false;
+  if (parsed.mode === 'snapshot' && parsed.o) {
+    const captured = new Date(parsed.t).toLocaleString();
+    snapshotBanner.setContents(
+      `<div style='background:#fff8e1;border-left:3px solid #f57c00;padding:6px 10px;font-size:12px;color:#5d4037;'>` +
+      `<b>Snapshot</b> captured ${captured}. ` +
+      `Sender's monthly was <b>$${parsed.o.monthly.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}</b>. ` +
+      `Live recompute shown above (any rate/value changes since then would shift it).` +
+      `</div>`
+    );
+    snapshotBanner.show();
+  } else {
+    snapshotBanner.hide();
+  }
+  return true;
+}
+
+// ---- Bootstrap -------------------------------------------------------------
 isc.VLayout.create({
   ID: "root",
-  width: 480,
+  width: 520,
   autoDraw: true,
   padding: 24,
-  membersMargin: 16,
+  membersMargin: 12,
   members: [
     isc.Label.create({
-      height: 36,
+      height: 40,
       contents: "<div style='font-size:20px;font-weight:600;color:#222;'>Mortgage Calculator</div>" +
-                "<div style='font-size:11px;color:#888;'>SmartClient on Cloudflare Pages &middot; no build, no bundler</div>"
+                "<div style='font-size:11px;color:#888;'>Save scenarios via URL — works across devices, no account.</div>"
     }),
+    isc.Label.create({ ID: "snapshotBanner", height: 1, visibility: "hidden", contents: "" }),
     isc.DynamicForm.create({
       ID: "calcForm",
       width: "100%",
       numCols: 2,
-      colWidths: [140, "*"],
+      colWidths: [160, "*"],
       titleOrientation: "left",
       autoFocus: true,
       fields: [
-        { name: "principal", title: "Loan Amount ($)",  type: "float",   defaultValue: 300000, change: recalc, keyPress: recalc },
-        { name: "rate",      title: "Interest Rate (%)",type: "float",   defaultValue: 7.5,    change: recalc, keyPress: recalc },
-        { name: "years",     title: "Term (years)",     type: "integer", defaultValue: 30,     change: recalc, keyPress: recalc }
+        { name: "principal",   title: "Home Price ($)",     type: "float",   defaultValue: 350000, change: recalc, keyPress: recalc },
+        { name: "downPayment", title: "Down Payment ($)",   type: "float",   defaultValue: 50000,  change: recalc, keyPress: recalc },
+        { name: "rate",        title: "Interest Rate (%)",  type: "float",   defaultValue: 7.0,    change: recalc, keyPress: recalc },
+        { name: "years",       title: "Term (years)",       type: "integer", defaultValue: 30,     change: recalc, keyPress: recalc }
       ]
     }),
-    isc.Label.create({ ID: "result", height: 70, padding: 8, overflow: "hidden", contents: "" })
+    isc.Label.create({ ID: "result", height: 80, padding: 4, overflow: "hidden", contents: "" }),
+    isc.HLayout.create({
+      height: 32,
+      membersMargin: 6,
+      members: [
+        isc.Button.create({ title: "Save Link",       width: 120, click: saveLink }),
+        isc.Button.create({ title: "Share Snapshot",  width: 140, click: saveSnapshot }),
+        isc.Label.create({ ID: "shareStatus", width: "*", padding: 4, contents: "" })
+      ]
+    }),
+    isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:#888;'>Recent scenarios (this device)</div>" }),
+    isc.Label.create({ ID: "recentsList", height: 200, overflow: "auto", padding: 0, contents: "" })
   ]
 });
 
-setTimeout(recalc, 0);
+(async function init() {
+  const restored = await restoreFromHash();
+  if (!restored) await recalc();
+  rebuildRecents();
+})();
+
+window.addEventListener('hashchange', restoreFromHash);
 </script>
 </body>
 </html>
