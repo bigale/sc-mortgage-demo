@@ -349,7 +349,10 @@ function rebuildRecents() {
     const monthly = r.monthly ? `$${r.monthly.toLocaleString('en-US', { maximumFractionDigits: 0 })}/mo` : '';
     // Setting location.hash triggers hashchange -> restoreFromHash, which
     // populates the form, recalcs, and updates status all in one path.
-    return `<a href='javascript:location.hash="i=${r.hash}"' ` +
+    // void(...) suppresses the assignment's return value — without it, the
+    // browser would render the resulting string as the entire page body
+    // (a classic javascript: URL footgun).
+    return `<a href='javascript:void(location.hash="i=${r.hash}")' ` +
            `style='display:flex;justify-content:space-between;padding:4px 8px;text-decoration:none;color:#333;border-bottom:1px solid #eee;'>` +
            `<span>${escapeHtml(r.label)}</span><span style='color:#1976d2;'>${escapeHtml(monthly)}</span></a>`;
   }).join('');
