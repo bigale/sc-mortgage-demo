@@ -213,10 +213,18 @@ async function openShare(mode) {
 
   // Compose the modal content as HTMLFlow + buttons row
   // Use a SC Window with members.
+  // Render QR with cellSize=3 (smaller), margin=4 — keeps the image to ~180px
+  // for a 250-char URL (version 7 QR, 45 modules × 3 + 8 margin ≈ 143px).
+  // Old cellSize=4, margin=8 produced a ~244px QR that overflowed the window.
+  const qr = qrcode(0, 'M');
+  qr.addData(url);
+  qr.make();
+  const compactImgTag = qr.createImgTag(3, 4);
+
   const win = isc.Window.create({
     title: 'Share scenario',
-    width: 380,
-    height: 460,
+    width: 440,
+    height: 540,
     autoCenter: true,
     isModal: true,
     showModalMask: true,
@@ -227,21 +235,22 @@ async function openShare(mode) {
     items: [
       isc.VLayout.create({
         width: '100%', height: '100%', padding: 16, membersMargin: 10,
+        overflow: 'hidden',
         members: [
           isc.Label.create({
             width: '100%', height: 200, align: 'center',
-            contents: "<div style='text-align:center;'>" + imgTag + "</div>"
+            contents: "<div style='text-align:center;line-height:1;'>" + compactImgTag + "</div>"
           }),
           isc.Label.create({
-            width: '100%', height: 30, align: 'center',
-            contents: "<div style='font-size:11px;color:#666;line-height:1.4;'>" + escapeHtml(labelText) + "</div>"
+            width: '100%', height: 28, align: 'center', wrap: false,
+            contents: "<div style='font-size:11px;color:#666;line-height:1.3;'>" + escapeHtml(labelText) + "</div>"
           }),
           isc.Label.create({
-            width: '100%', height: 60,
+            width: '100%', height: 32,
             contents:
               "<input type='text' id='shareUrlInput' value='" + escapeHtml(url) + "' readonly " +
               "onclick='this.select();' " +
-              "style='width:100%;padding:6px;font-family:monospace;font-size:11px;border:1px solid #ccc;border-radius:3px;' />"
+              "style='width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:11px;border:1px solid #ccc;border-radius:3px;' />"
           }),
           isc.HLayout.create({
             width: '100%', height: 32, membersMargin: 8, align: 'center',
@@ -270,10 +279,11 @@ async function openShare(mode) {
             ]
           }),
           isc.Label.create({
-            width: '100%', height: 30,
-            contents: "<div style='font-size:10px;color:#888;line-height:1.4;'>" +
-              "Scan QR with your phone camera to open on mobile. " +
-              "On mobile, <b>Native share</b> opens iMessage/SMS/Mail/AirDrop." +
+            width: '100%', height: 50, padding: 4,
+            contents: "<div style='font-size:10px;color:#888;line-height:1.5;'>" +
+              "<b>Phone:</b> open camera, point at QR — opens this scenario on mobile." +
+              "<br><b>Mobile share:</b> Native share opens iMessage / Mail / WhatsApp / AirDrop." +
+              "<br><b>Anywhere:</b> Copy URL pastes the link." +
               "</div>"
           })
         ]
