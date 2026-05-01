@@ -13,6 +13,11 @@
 <script src="smartclient/system/modules/ISC_Foundation.js"></script>
 <script src="smartclient/system/modules/ISC_Containers.js"></script>
 <script src="smartclient/system/modules/ISC_Forms.js"></script>
+<!-- ISC_DataBinding required: SC's form change handler internally calls
+     RPCManager.startQueue() which lives in this module. Without it, the
+     form's keystroke handler throws silently and user edits don't stick
+     (DOM updates but model reverts on blur). +400KB brotli, but mandatory. -->
+<script src="smartclient/system/modules/ISC_DataBinding.js"></script>
 <script src="smartclient/skins/Tahoe/load_skin.js"></script>
 <script src="lib/qrcode.min.js"></script>
 </head>
@@ -403,13 +408,19 @@ isc.VLayout.create({
       colWidths: [160, "*"],
       titleOrientation: "left",
       autoFocus: true,
-      // Each edit just flags Modified — no auto-recalc, no auto-URL-update.
-      // The user drives compute + save explicitly via the buttons below.
+      // Use type:"text" instead of "float"/"integer". SC's FloatItem and
+      // IntegerItem don't sync DOM input -> model in this setup: typing
+      // updates the visible input but the SC model stays stale, and on
+      // blur the input reverts to the old value. Plain text fields don't
+      // have that issue. We parse to numbers in calculate(). The change
+      // handler is `changed` (singular, fires after value commit) rather
+      // than `change` (which on text fires per-keystroke and would defeat
+      // the explicit Calculate-button flow).
       fields: [
-        { name: "principal",   title: "Home Price ($)",     type: "float",   defaultValue: 350000, change: refreshStatus },
-        { name: "downPayment", title: "Down Payment ($)",   type: "float",   defaultValue: 50000,  change: refreshStatus },
-        { name: "rate",        title: "Interest Rate (%)",  type: "float",   defaultValue: 7.0,    change: refreshStatus },
-        { name: "years",       title: "Term (years)",       type: "integer", defaultValue: 30,     change: refreshStatus }
+        { name: "principal",   title: "Home Price ($)",     type: "text", defaultValue: "350000", changed: refreshStatus },
+        { name: "downPayment", title: "Down Payment ($)",   type: "text", defaultValue: "50000",  changed: refreshStatus },
+        { name: "rate",        title: "Interest Rate (%)",  type: "text", defaultValue: "7",      changed: refreshStatus },
+        { name: "years",       title: "Term (years)",       type: "text", defaultValue: "30",     changed: refreshStatus }
       ]
     }),
     isc.Label.create({ ID: "result", height: 80, padding: 4, overflow: "hidden", contents: "" }),
