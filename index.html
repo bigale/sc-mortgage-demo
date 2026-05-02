@@ -350,14 +350,16 @@ async function openShare(mode) {
           }),
           isc.Label.create({
             width: '100%', height: 28, align: 'center', wrap: false,
-            contents: "<div style='font-size:11px;color:#666;line-height:1.3;'>" + escapeHtml(labelText) + "</div>"
+            contents: "<div style='font-size:11px;color:var(--cssz-muted,#666);line-height:1.3;'>" + escapeHtml(labelText) + "</div>"
           }),
           isc.Label.create({
             width: '100%', height: 32,
             contents:
               "<input type='text' id='shareUrlInput' value='" + escapeHtml(url) + "' readonly " +
               "onclick='this.select();' " +
-              "style='width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:11px;border:1px solid #ccc;border-radius:3px;' />"
+              "style='width:100%;box-sizing:border-box;padding:6px;font-family:var(--cssz-mono,monospace);font-size:11px;" +
+              "background:var(--cssz-input-bg,#fff);color:var(--cssz-text,#000);" +
+              "border:1px solid var(--cssz-border,#ccc);border-radius:3px;' />"
           }),
           isc.HLayout.create({
             width: '100%', height: 32, membersMargin: 8, align: 'center',
@@ -387,7 +389,7 @@ async function openShare(mode) {
           }),
           isc.Label.create({
             width: '100%', height: 50, padding: 4,
-            contents: "<div style='font-size:10px;color:#888;line-height:1.5;'>" +
+            contents: "<div style='font-size:10px;color:var(--cssz-muted,#888);line-height:1.5;'>" +
               "<b>Phone:</b> open camera, point at QR — opens this scenario on mobile." +
               "<br><b>Mobile share:</b> Native share opens iMessage / Mail / WhatsApp / AirDrop." +
               "<br><b>Anywhere:</b> Copy URL pastes the link." +
