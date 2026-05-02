@@ -28,8 +28,58 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Theme toggle (lives outside SC layout so it doesn't fight measurements) */
+  #themeToggle {
+    position: fixed; top: 12px; right: 12px; z-index: 10000;
+    width: 32px; height: 32px; border-radius: 999px;
+    border: 1px solid var(--cssz-border, #ccc);
+    background: var(--cssz-surface, #fff);
+    color: var(--cssz-text, #333);
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 16px; line-height: 1;
+    box-shadow: 0 1px 3px color-mix(in oklch, var(--cssz-text, #000) 10%, transparent);
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #themeToggle:hover { background: var(--cssz-row-over, #f5f5f5); }
+  #themeToggle .sun { display: inline; }
+  #themeToggle .moon { display: none; }
+  body.dark #themeToggle .sun { display: none; }
+  body.dark #themeToggle .moon { display: inline; }
+</style>
+<script>
+  // Apply stored / system theme BEFORE SC bootstraps so first paint is correct.
+  (function applyStoredTheme() {
+    const stored = localStorage.getItem('sc-mortgage:theme');
+    const systemDark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const dark = stored === 'dark' || (stored === null && systemDark);
+    if (dark) document.documentElement.classList.add('preload-dark');
+  })();
+</script>
+<style>
+  /* Apply early — before body class — so the page background paints correctly. */
+  html.preload-dark body.theme-modern { background: oklch(16% 0.01 270); }
+</style>
 </head>
 <body class="sc theme-modern">
+<button id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode"
+        onclick="toggleTheme()"><span class="sun">☀️</span><span class="moon">🌙</span></button>
+<script>
+// Sync the body class with the early-applied html.preload-dark, then provide
+// the runtime toggle. Persists to localStorage; re-applies on hashchange (no
+// re-render needed because the toggle is just a body class).
+function applyTheme(dark) {
+  document.body.classList.toggle('dark', dark);
+  document.documentElement.classList.toggle('preload-dark', dark);
+}
+function toggleTheme() {
+  const dark = !document.body.classList.contains('dark');
+  applyTheme(dark);
+  localStorage.setItem('sc-mortgage:theme', dark ? 'dark' : 'light');
+}
+applyTheme(document.documentElement.classList.contains('preload-dark'));
+</script>
 <script>
 // ---- Scenario encoding (per EDGE_SUBSTRATE_ARCHITECTURE.md) -------------
 // Hash-based state on a real route. Hash is never sent to the edge or any
@@ -143,7 +193,9 @@ function isModified() {
 }
 
 function setStatus(msg, kind /* 'info' | 'ok' | 'warn' */) {
-  const colors = { info: '#888', ok: '#2e7d32', warn: '#c75300' };
+  // info uses --cssz-muted so it tracks theme; ok/warn stay semantic colors
+  // (they convey state, not branding — same hue in light + dark).
+  const colors = { info: 'var(--cssz-muted, #888)', ok: '#2e7d32', warn: '#c75300' };
   const c = colors[kind || 'info'];
   shareStatus.setContents(msg
     ? `<span style='color:${c};font-size:12px;'>${escapeHtml(msg)}</span>`
@@ -164,18 +216,19 @@ function recalc() {
   const input = getInput();
   const out = calculate(input);
   if (!out) {
-    result.setContents("<div style='color:#888;font-size:13px;'>Enter loan amount, rate, and term, then click Calculate.</div>");
+    result.setContents("<div style='color:var(--cssz-muted,#888);font-size:13px;'>Enter loan amount, rate, and term, then click Calculate.</div>");
     return null;
   }
   const fmt0 = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 0 });
   const fmt2 = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+  // PMI: kept as semantic warning hue (intent: caution about extra cost).
   const pmiLine = out.pmi > 0
-    ? `<div style='color:#a05; font-size:12px; margin-top:4px;'>PMI estimate: <b>+$${fmt2(out.pmi)}/mo</b> (down payment ${(out.dpPct * 100).toFixed(0)}% &lt; 20%)</div>`
+    ? `<div style='color:#c75300;font-size:12px;margin-top:4px;'>PMI estimate: <b>+$${fmt2(out.pmi)}/mo</b> (down payment ${(out.dpPct * 100).toFixed(0)}% &lt; 20%)</div>`
     : '';
   result.setContents(
-    `<div style='font-size:24px;color:#1976d2;font-weight:600;'>$${fmt2(out.monthly)}` +
-    `<span style='font-size:14px;color:#666;font-weight:400;'> / month P&I</span></div>` +
-    `<div style='margin-top:6px;font-size:13px;color:#555;'>` +
+    `<div style='font-size:24px;color:var(--cssz-accent,#1976d2);font-weight:600;'>$${fmt2(out.monthly)}` +
+    `<span style='font-size:14px;color:var(--cssz-muted,#666);font-weight:400;'> / month P&I</span></div>` +
+    `<div style='margin-top:6px;font-size:13px;color:var(--cssz-text,#555);'>` +
       `Loan: <b>$${fmt0(out.loan)}</b> &middot; ` +
       `Total paid: <b>$${fmt0(out.total)}</b> &middot; ` +
       `Interest: <b>$${fmt0(out.interest)}</b>` +
@@ -350,7 +403,7 @@ async function openShare(mode) {
 function rebuildRecents() {
   const recents = getRecents();
   if (recents.length === 0) {
-    recentsList.setContents("<em style='color:#888;font-size:12px;'>No saved scenarios yet. Click <b>Save</b> after calculating.</em>");
+    recentsList.setContents("<em style='color:var(--cssz-muted,#888);font-size:12px;'>No saved scenarios yet. Click <b>Save</b> after calculating.</em>");
     return;
   }
   const rows = recents.map((r) => {
@@ -361,8 +414,8 @@ function rebuildRecents() {
     // browser would render the resulting string as the entire page body
     // (a classic javascript: URL footgun).
     return `<a href='javascript:void(location.hash="i=${r.hash}")' ` +
-           `style='display:flex;justify-content:space-between;padding:4px 8px;text-decoration:none;color:#333;border-bottom:1px solid #eee;'>` +
-           `<span>${escapeHtml(r.label)}</span><span style='color:#1976d2;'>${escapeHtml(monthly)}</span></a>`;
+           `style='display:flex;justify-content:space-between;padding:4px 8px;text-decoration:none;color:var(--cssz-text,#333);border-bottom:1px solid var(--cssz-border-soft,#eee);'>` +
+           `<span>${escapeHtml(r.label)}</span><span style='color:var(--cssz-accent,#1976d2);'>${escapeHtml(monthly)}</span></a>`;
   }).join('');
   recentsList.setContents(rows);
 }
@@ -408,8 +461,8 @@ isc.VLayout.create({
   members: [
     isc.Label.create({
       height: 40,
-      contents: "<div style='font-size:20px;font-weight:600;color:#222;'>Mortgage Calculator</div>" +
-                "<div style='font-size:11px;color:#888;'>Save scenarios via URL — works across devices, no account.</div>"
+      contents: "<div style='font-size:20px;font-weight:600;color:var(--cssz-text,#222);'>Mortgage Calculator</div>" +
+                "<div style='font-size:11px;color:var(--cssz-muted,#888);'>Save scenarios via URL — works across devices, no account.</div>"
     }),
     isc.Label.create({ ID: "snapshotBanner", height: 1, visibility: "hidden", contents: "" }),
     isc.DynamicForm.create({
@@ -451,7 +504,7 @@ isc.VLayout.create({
       ]
     }),
     isc.Label.create({ ID: "shareStatus", width: "100%", height: 22, padding: 2, contents: "" }),
-    isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:#888;'>Recent scenarios (this device)</div>" }),
+    isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:var(--cssz-muted,#888);'>Recent scenarios (this device)</div>" }),
     // Label defaults to valign:"center" — that pushes a single recent row
     // to the middle of a 200px box. Force top-align so rows stack downward
     // as they're added.

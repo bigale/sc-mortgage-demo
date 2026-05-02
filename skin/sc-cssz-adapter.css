@@ -220,12 +220,28 @@
   text-align: var(--cssz-form-title-align, left);
 }
 
-/* Form items (input/textarea/select). SC sizes these inline. Border + padding
-   here change visible height vs Tahoe stock — tolerable, the form still works.
-   Set --cssz-input-pad to '4px 6px' if you want compact, '6px 8px' for modern. */
+/* Form items. SC's class names depend on the item type:
+   - .textItem family: bordered text input (legacy)
+   - .textItemLite family: bare input — what TextItem actually emits in Tahoe
+     (`textItemLite`, `textItemLiteFocused`, `textItemLiteDisabled`, etc.)
+   - .textAreaItem family
+   - .selectItem family
+   Cover all Lite/non-Lite variants so any TextItem on the page gets themed. */
 .sc .textItem,
+.sc .textItemLite,
+.sc .textItemFocused,
+.sc .textItemLiteFocused,
+.sc .textItemDisabled,
+.sc .textItemLiteDisabled,
+.sc .textItemError,
+.sc .textItemLiteError,
 .sc .textAreaItem,
-.sc .selectItem {
+.sc .textAreaItemLite,
+.sc .textAreaItemFocused,
+.sc .textAreaItemLiteFocused,
+.sc .selectItem,
+.sc .selectItemText,
+.sc .selectItemTextFocused {
   background: var(--cssz-input-bg, var(--cssz-surface, #fff));
   color: var(--cssz-text, #000);
   border: 1px solid var(--cssz-border, #ababab);
@@ -233,11 +249,25 @@
   font-family: var(--cssz-font, inherit);
   outline: none;
 }
+/* Focused state — colored border + ring. SC sets :focus on real <input>s and
+   also stamps a *Focused class. Cover both. */
 .sc .textItem:focus,
+.sc .textItemLite:focus,
 .sc .textAreaItem:focus,
-.sc .selectItem:focus {
+.sc .textAreaItemLite:focus,
+.sc .selectItem:focus,
+.sc .textItemFocused,
+.sc .textItemLiteFocused,
+.sc .textAreaItemFocused,
+.sc .textAreaItemLiteFocused,
+.sc .selectItemTextFocused {
   border-color: var(--cssz-accent, #4f46e5);
   box-shadow: 0 0 0 2px color-mix(in oklch, var(--cssz-accent, #4f46e5) 25%, transparent);
+}
+.sc .textItemDisabled,
+.sc .textItemLiteDisabled,
+.sc .textAreaItemDisabled {
+  color: var(--cssz-text-mute, var(--cssz-muted, #999));
 }
 /* Checkboxes — color only. Don't set width/height/margin; SC sizes them. */
 .sc .checkboxItem {
