@@ -17,17 +17,31 @@
  * Activation: anything inside an element with class `sc` participates. Drop a
  * CSSZ block on any descendant (inline style or class) to rescope the theme.
  *
- * Discipline:
+ * Discipline (per evaluation §7 — "the hostile bits"):
  *   - Single-class selectors only. SC reads style declarations via CSSOM and
  *     mishandles multi-class selectors / @-rules. State suffixes are real SC
  *     class names (.buttonOver, .tabSelected, .listGridCellSelected) — not
  *     compound selectors like .button.over.
+ *   - MAY set: color, background, font-family, font-weight, box-shadow,
+ *     border-radius, focus rings, accent-color, filter (for sprite recolor).
+ *   - MUST NOT set on SC-measured elements: padding, margin, display, gap,
+ *     width, height, border (changes box size), line-height, position. SC
+ *     reads these back via getComputedStyle to size/position children. Our
+ *     overrides cause clipping (windowHeader title), hidden chrome (close
+ *     icon), or row-height drift (listGrid).
+ *   - Border alternative: use `box-shadow: inset 0 -1px 0 var(--cssz-border)`
+ *     for a 1px separator without changing the box.
  *   - No images. Any sprite-image chrome SC paints (scrollbar grips, tab
  *     scroller arrows, some menu glyphs) is deliberately untouched here;
  *     patch in a separate stylesheet if needed.
+ *   - For app-level breathing room (taller header, wider rows), set the SC
+ *     widget property in app code: `headerHeight: 28`, `rowHeight: 24`, etc.
  * ============================================================================= */
 
 /* ---------- Surface (page background, base text) ---------------------------- */
+/* NOTE: Don't set `box-sizing: border-box` on .sc * — too broad. SC's internal
+   divs were authored against the browser default; flipping the model causes
+   subtle 1-2px sizing drift everywhere SC measures inline width/height. */
 
 .sc {
   background: var(--cssz-bg, transparent);
@@ -35,7 +49,6 @@
   font-family: var(--cssz-font, inherit);
   font-size: var(--cssz-fs, inherit);
 }
-.sc, .sc * { box-sizing: border-box; }
 
 .sc .pageBackground {
   background: var(--cssz-bg, transparent);
@@ -56,6 +69,10 @@
 }
 
 /* ---------- Button family --------------------------------------------------- */
+/* Buttons are leaf nodes SC sizes from app code (width: 100, height: 24, etc.).
+   Padding inside is generally fine for typical sizes but will clip text on
+   buttons narrower than ~70px. Border + border-radius are OK; SC doesn't
+   measure button border thickness. */
 
 .sc .button {
   background: var(--cssz-button-bg, var(--cssz-surface, #fff));
@@ -63,75 +80,75 @@
   border: 1px solid var(--cssz-border, #ababab);
   border-radius: var(--cssz-radius, 0);
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
-  padding: calc(var(--cssz-pad, 6px) - 2px) calc(var(--cssz-pad, 6px) + 4px);
-  display: inline-flex; align-items: center; gap: 6px;
+  font-weight: 500;
   cursor: pointer; user-select: none;
-  line-height: 1.4;
 }
 .sc .buttonOver {
   background: var(--cssz-button-bg-over, var(--cssz-row-over, #f5f5f5));
   color: var(--cssz-button-text, var(--cssz-text, #000));
   border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
 }
 .sc .buttonDown {
   background: var(--cssz-button-bg-down, var(--cssz-row-over, #ededed));
   color: var(--cssz-button-text, var(--cssz-text, #000));
   border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
 }
 .sc .buttonSelected {
   background: var(--cssz-row-selected, #e0e7ff);
   color: var(--cssz-row-selected-text, var(--cssz-text, #000));
   border: 1px solid var(--cssz-accent, #4f46e5);
+  border-radius: var(--cssz-radius, 0);
 }
 .sc .buttonFocused {
   background: var(--cssz-button-bg, var(--cssz-surface, #fff));
   color: var(--cssz-button-text, var(--cssz-text, #000));
   border: 1px solid var(--cssz-accent, #4f46e5);
+  border-radius: var(--cssz-radius, 0);
   box-shadow: 0 0 0 2px color-mix(in oklch, var(--cssz-accent, #4f46e5) 25%, transparent);
 }
 .sc .buttonDisabled {
   background: var(--cssz-button-bg-disabled, var(--cssz-surface-mute, #f5f5f5));
   color: var(--cssz-text-mute, var(--cssz-muted, #999));
   border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
 }
 .sc .buttonPrimary {
   background: var(--cssz-accent, #4f46e5);
   color: var(--cssz-on-accent, #fff);
   border: 1px solid var(--cssz-accent, #4f46e5);
+  border-radius: var(--cssz-radius, 0);
 }
 
 /* ---------- ToolStrip ------------------------------------------------------- */
+/* SC sizes ToolStrip to a measured height (~26px stock). Don't set padding/
+   display:flex/gap — SC positions children inside via inline styles. Bottom
+   separator via inset box-shadow so it doesn't push content. */
 
 .sc .toolStrip {
   background: var(--cssz-tool-bg, var(--cssz-surface, #fafafa));
-  border-bottom: 1px solid var(--cssz-border, #ababab);
-  display: flex; align-items: center; gap: 4px;
-  padding: 6px 8px;
+  box-shadow: inset 0 -1px 0 var(--cssz-border, #ababab);
 }
 .sc .toolStripSeparator {
   background: var(--cssz-border, #ababab);
-  width: 1px; align-self: stretch; margin: 4px;
 }
 .sc .toolStripLabel {
   color: var(--cssz-muted, #666);
   font-family: var(--cssz-font, inherit);
-  font-size: calc(var(--cssz-fs, 12px) - 1px);
-  padding: 0 6px;
 }
 
 /* ---------- Window / Dialog ------------------------------------------------- */
+/* Window header: visual-only. SC sizes the header to the Window's `headerHeight`
+   property; padding/display would clip the close icon and crop the title.
+   Use box-shadow for the separator. */
 
 .sc .windowBackground {
   background: var(--cssz-surface, #fff);
-  border: 1px solid var(--cssz-border, #ababab);
+  /* SC may already draw a window border; box-shadow gives an outer hairline
+     without affecting Window's measured size. */
+  box-shadow: 0 0 0 1px var(--cssz-border, #ababab);
 }
-/* Window header: visual-only overrides. SC sizes the header to the Window's
-   `headerHeight` property and reads its CSS height/padding back via
-   getComputedStyle; setting padding/display here would clip the close icon
-   and crop the title. Use box-shadow for a separator (doesn't affect layout)
-   instead of border-bottom (which would push content down inside SC's
-   measured height). */
 .sc .windowHeader {
   background: var(--cssz-window-bar-bg, var(--cssz-surface, #fafafa));
   color: var(--cssz-window-bar-text, var(--cssz-text, #000));
@@ -142,8 +159,7 @@
   font-family: var(--cssz-font, inherit);
   font-weight: 600;
   /* Don't override font-size — Tahoe sizes the header for its 11px font.
-     If you need a larger header font, bump the Window's `headerHeight`
-     property in app code (e.g. headerHeight: 28). */
+     For a larger header font, bump `headerHeight: 28` on the Window. */
 }
 /* Tahoe's headerIcons (close.png, maximize.png, etc.) are near-white PNGs
    designed for a dark header. On a light --cssz-window-bar-bg they vanish.
@@ -153,101 +169,69 @@
 .sc .windowHeader .imgButton img {
   filter: var(--cssz-window-icon-filter, brightness(0));
 }
-.sc .windowBody {
-  background: var(--cssz-surface, #fff);
-  padding: var(--cssz-pad, 8px);
-}
+.sc .windowBody,
 .sc .dialogBody {
   background: var(--cssz-surface, #fff);
-  padding: var(--cssz-pad, 8px);
+  /* No padding here — SC sizes windowBody inline. App code provides padding
+     via the Window's `items` (e.g. wrap content in a VLayout with padding). */
 }
 
 /* ---------- SectionStack ---------------------------------------------------- */
+/* SC sizes sectionStack and sectionHeader; padding/border on these will clip.
+   Border-radius and inset box-shadow are safe. */
 
 .sc .sectionStack {
   background: var(--cssz-surface, #fff);
-  border: 1px solid var(--cssz-border, #ababab);
   border-radius: var(--cssz-radius, 0);
-  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--cssz-border, #ababab);
 }
 .sc .sectionHeader {
   background: var(--cssz-section-bg, var(--cssz-surface, #fafafa));
   color: var(--cssz-section-text, var(--cssz-text, #000));
-  border-bottom: 1px solid var(--cssz-border, #ababab);
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
   font-weight: 600;
-  padding: 8px 10px;
-  display: flex; align-items: center; gap: 8px;
+  box-shadow: inset 0 -1px 0 var(--cssz-border, #ababab);
   cursor: pointer; user-select: none;
 }
 .sc .sectionItem {
   background: var(--cssz-surface, #fff);
-  border-bottom: 1px solid var(--cssz-border-soft, var(--cssz-border, #e5e5e5));
-  padding: 10px 12px;
+  /* No padding — SC sizes section items. */
 }
 
 /* ---------- DynamicForm items ----------------------------------------------- */
+/* SC renders form cells as <td> in a table. We DO NOT override .formCell
+   layout — SC's table layout handles alignment. Only color/font on titles. */
 
-.sc .formCell,
-.sc .formCellFocused,
-.sc .formCellOver,
-.sc .formCellDisabled {
-  display: grid; grid-template-columns: 140px 1fr; gap: 8px;
-  padding: 5px 0; align-items: center;
-}
-/* SC swaps .formTitle → .formTitleFocused/-Over/-Disabled per state.
-   Cover all four so the title stays consistent — focus is already shown
-   on the input itself via the --cssz-accent border + ring. */
+/* SC swaps .formTitle → .formTitleFocused/-Over/-Disabled per state. Cover all
+   four so the title stays consistent — focus is shown on the input border.
+   text-align is safe — affects text flow within the cell, not box dimensions. */
 .sc .formTitle,
 .sc .formTitleFocused,
 .sc .formTitleOver {
   color: var(--cssz-form-title, var(--cssz-muted, #555));
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
-  text-align: var(--cssz-form-title-align, left);
   font-weight: 500;
+  text-align: var(--cssz-form-title-align, left);
 }
 .sc .formTitleDisabled {
   color: var(--cssz-text-mute, var(--cssz-muted, #999));
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
-  text-align: var(--cssz-form-title-align, left);
   font-weight: 500;
+  text-align: var(--cssz-form-title-align, left);
 }
-.sc .textItem {
-  background: var(--cssz-input-bg, var(--cssz-surface, #fff));
-  color: var(--cssz-text, #000);
-  border: 1px solid var(--cssz-border, #ababab);
-  border-radius: var(--cssz-radius, 0);
-  font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
-  padding: var(--cssz-input-pad, 6px 8px);
-  width: 100%; outline: none;
-}
-.sc .textAreaItem {
-  background: var(--cssz-input-bg, var(--cssz-surface, #fff));
-  color: var(--cssz-text, #000);
-  border: 1px solid var(--cssz-border, #ababab);
-  border-radius: var(--cssz-radius, 0);
-  font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
-  padding: var(--cssz-input-pad, 6px 8px);
-  width: 100%; outline: none;
-}
+
+/* Form items (input/textarea/select). SC sizes these inline. Border + padding
+   here change visible height vs Tahoe stock — tolerable, the form still works.
+   Set --cssz-input-pad to '4px 6px' if you want compact, '6px 8px' for modern. */
+.sc .textItem,
+.sc .textAreaItem,
 .sc .selectItem {
   background: var(--cssz-input-bg, var(--cssz-surface, #fff));
   color: var(--cssz-text, #000);
   border: 1px solid var(--cssz-border, #ababab);
   border-radius: var(--cssz-radius, 0);
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
-  padding: var(--cssz-input-pad, 6px 8px);
-  padding-right: 22px;
-  width: 100%; outline: none;
-  appearance: none; -webkit-appearance: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M2 3 L5 7 L8 3' fill='none' stroke='%23888' stroke-width='1.5'/></svg>");
-  background-repeat: no-repeat; background-position: right 6px center;
+  outline: none;
 }
 .sc .textItem:focus,
 .sc .textAreaItem:focus,
@@ -255,66 +239,63 @@
   border-color: var(--cssz-accent, #4f46e5);
   box-shadow: 0 0 0 2px color-mix(in oklch, var(--cssz-accent, #4f46e5) 25%, transparent);
 }
+/* Checkboxes — color only. Don't set width/height/margin; SC sizes them. */
 .sc .checkboxItem {
-  display: inline-flex; align-items: center; gap: 6px;
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
 }
 .sc .checkboxItem input[type=checkbox] {
   accent-color: var(--cssz-accent, #4f46e5);
-  width: 14px; height: 14px; margin: 0;
 }
 
 /* ---------- DateChooser ----------------------------------------------------- */
+/* SC sizes DateChooser and its inner cells. Color/font/border-radius only. */
 
 .sc .dateChooser {
   background: var(--cssz-surface, #fff);
-  border: 1px solid var(--cssz-border, #ababab);
   border-radius: var(--cssz-radius, 0);
-  padding: 6px;
-  display: inline-block;
+  box-shadow: 0 0 0 1px var(--cssz-border, #ababab);
 }
 .sc .dateChooserHeader {
   background: var(--cssz-section-bg, var(--cssz-surface, #fafafa));
   color: var(--cssz-section-text, var(--cssz-text, #000));
-  border-radius: calc(var(--cssz-radius, 0) - 2px);
-  padding: 4px 6px;
-  margin-bottom: 4px;
-  display: flex; align-items: center; justify-content: space-between;
   font-weight: 600;
 }
-.sc .dateGrid { display: grid; grid-template-columns: repeat(7, 28px); gap: 0; }
-.sc .dateCell, .sc .dateHead {
-  width: 28px; height: 24px; display: grid; place-items: center;
-  font-size: calc(var(--cssz-fs, 12px) - 1px); cursor: pointer;
+.sc .dateCell,
+.sc .dateHead {
   color: var(--cssz-text, inherit);
+  font-family: var(--cssz-font, inherit);
 }
-.sc .dateHead { color: var(--cssz-muted, #999); font-weight: 600; cursor: default; }
-.sc .dateCellOver { background: var(--cssz-row-over, #f5f5f5); border-radius: 3px; }
+.sc .dateHead { color: var(--cssz-muted, #999); font-weight: 600; }
+.sc .dateCellOver {
+  background: var(--cssz-row-over, #f5f5f5);
+}
 .sc .dateCellSelected {
   background: var(--cssz-accent, #4f46e5);
   color: var(--cssz-on-accent, #fff);
-  border-radius: 3px;
 }
 
 /* ---------- ListGrid -------------------------------------------------------- */
+/* SC measures listGridCell heights to lay out rows. Don't set padding or
+   border-bottom on rows — over many rows even 1px drift breaks scrolling
+   math. Color/bg only. */
 
 .sc .listGrid {
   background: var(--cssz-surface, #fff);
-  border: 1px solid var(--cssz-border, #ababab);
   border-radius: var(--cssz-radius, 0);
-  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--cssz-border, #ababab);
 }
 .sc .gridHeader {
   background: var(--cssz-header-bg, var(--cssz-section-bg, var(--cssz-surface, #fafafa)));
   color: var(--cssz-section-text, var(--cssz-text, #000));
-  border-bottom: 1px solid var(--cssz-border, #ababab);
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
   font-weight: 600;
+  box-shadow: inset 0 -1px 0 var(--cssz-border, #ababab);
 }
 .sc .gridBody { background: var(--cssz-surface, #fff); }
-.sc .gridRow { border-bottom: 1px solid var(--cssz-border-soft, var(--cssz-border, #e5e5e5)); cursor: pointer; }
+.sc .gridRow {
+  /* No border-bottom — SC measures row heights. Use inset box-shadow on
+     listGridCell for visual separation if needed. */
+}
 .sc .gridRowOver { background: var(--cssz-row-over, #f5f5f5); }
 .sc .gridRowSelected {
   background: var(--cssz-row-selected, #e0e7ff);
@@ -323,8 +304,7 @@
 .sc .listGridCell {
   color: var(--cssz-text, inherit);
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
-  padding: 6px 10px;
+  /* No padding — SC measures cell heights for row layout. */
 }
 .sc .listGridCellSelected {
   background: var(--cssz-row-selected, #e0e7ff);
@@ -337,43 +317,36 @@
 }
 
 /* ---------- TabSet ---------------------------------------------------------- */
+/* SC measures tab widths/heights for tab strip layout. Don't set padding on
+   .tab — it will throw off the strip's calculated total width. Color/font/
+   border-radius only on tabs. Selected indicator via inset box-shadow. */
 
 .sc .tabBar {
   background: var(--cssz-tab-bg, transparent);
-  border-bottom: 1px solid var(--cssz-border, #ababab);
-  display: flex; padding: 0;
+  box-shadow: inset 0 -1px 0 var(--cssz-border, #ababab);
 }
 .sc .tab {
   background: transparent;
   color: var(--cssz-tab-text, var(--cssz-muted, #666));
-  border: 1px solid transparent;
-  border-bottom: 0;
-  cursor: pointer;
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
-  padding: 6px 14px;
   border-radius: var(--cssz-radius, 0) var(--cssz-radius, 0) 0 0;
-  position: relative; top: 1px;
+  cursor: pointer;
 }
 .sc .tabSelected {
   background: var(--cssz-tab-selected-bg, var(--cssz-surface, #fff));
   color: var(--cssz-tab-selected-text, var(--cssz-text, #000));
-  border-color: var(--cssz-border, #ababab);
-  box-shadow: 0 -2px 0 var(--cssz-accent, #4f46e5) inset;
   font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--cssz-accent, #4f46e5);
 }
 .sc .tabBody {
   background: var(--cssz-surface, #fff);
-  border: 1px solid var(--cssz-border, #ababab);
-  border-top: 0;
-  border-radius: 0 0 var(--cssz-radius, 0) var(--cssz-radius, 0);
-  padding: 14px;
+  /* No border or padding — SC sizes the tabBody. */
 }
 
-/* ---------- Icon base (currentColor is themable via --cssz-icon) ----------- */
+/* ---------- Icon base ------------------------------------------------------- */
+/* `.icon` is for app-defined icons (mask-based or inline SVG). SC's own
+   icon imgs are handled separately under .windowHeader img above. */
 
 .sc .icon {
   color: var(--cssz-icon, currentColor);
-  width: 14px; height: 14px;
-  display: inline-block; flex: none;
 }
