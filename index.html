@@ -28,6 +28,38 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- D3 via jsDelivr ESM — zero bytes against Pages quota, browser-cached
+     across sites that load this same URL. Stashed on window for the inline
+     non-module script. d3-ready event lets recalc re-render once it arrives. -->
+<script type="module">
+  import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
+  window.d3 = d3;
+  window.dispatchEvent(new Event('d3-ready'));
+</script>
+<style>
+  /* Amortization chart: SVG fills resolve CSSZ vars, so the chart re-themes
+     for free on light/dark/tenant change — no re-render needed. */
+  .cssz-chart { width: 100%; height: 100%; display: block; }
+  .cssz-chart .cssz-interest  { fill: var(--cssz-muted, #999); opacity: 0.55; }
+  .cssz-chart .cssz-principal { fill: var(--cssz-accent, #4f46e5); opacity: 0.85; }
+  .cssz-chart .cssz-axis text {
+    fill: var(--cssz-muted, #888);
+    font-size: 10px;
+    font-family: var(--cssz-font, sans-serif);
+  }
+  .cssz-chart .cssz-axis line,
+  .cssz-chart .cssz-axis path { stroke: var(--cssz-border, #ccc); shape-rendering: crispEdges; }
+  .cssz-chart-caption {
+    font-size: 11px; color: var(--cssz-muted, #888);
+    margin: 0 0 4px; display: flex; gap: 12px; align-items: center;
+  }
+  .cssz-chart-caption .swatch {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 2px; vertical-align: -1px; margin-right: 4px;
+  }
+  .cssz-chart-caption .swatch.principal { background: var(--cssz-accent, #4f46e5); opacity: 0.85; }
+  .cssz-chart-caption .swatch.interest  { background: var(--cssz-muted, #999); opacity: 0.55; }
+</style>
 <style>
   /* Theme toggle (lives outside SC layout so it doesn't fight measurements) */
   #themeToggle {
@@ -252,6 +284,7 @@ function recalc() {
     `</div>` + pmiLine +
     `</div>`
   );
+  renderChart(input);
   return out;
 }
 
@@ -264,6 +297,80 @@ function playLoadAnimation() {
   document.body.classList.add('cssz-loading');
   setTimeout(() => document.body.classList.remove('cssz-loading'), 800);
 }
+
+// ---- Amortization chart (D3) ----------------------------------------------
+// Stacked area: per-month payment composition (interest dominant early,
+// principal dominant late — the classic mortgage education moment).
+function buildAmortization(input) {
+  const loan = Math.max(0, input.principal - (input.downPayment || 0));
+  const monthlyRate = input.rate / 100 / 12;
+  const n = input.years * 12;
+  if (loan <= 0 || monthlyRate <= 0 || n <= 0) return [];
+  const monthly = (loan * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -n));
+  let balance = loan;
+  const out = [];
+  for (let m = 1; m <= n; m++) {
+    const interest = balance * monthlyRate;
+    const principal = monthly - interest;
+    balance -= principal;
+    out.push({ month: m, year: m / 12, principal, interest });
+  }
+  return out;
+}
+
+function renderChart(input) {
+  if (!window.d3) return;  // d3 not loaded yet — d3-ready listener will retry
+  const d3 = window.d3;
+  const host = document.getElementById('amortChart');
+  if (!host) return;
+  const data = buildAmortization(input);
+  host.innerHTML = '';
+  if (!data.length) return;
+
+  const W = host.clientWidth || 480;
+  const H = host.clientHeight || 170;
+  const margin = { top: 6, right: 8, bottom: 22, left: 50 };
+  const innerW = Math.max(50, W - margin.left - margin.right);
+  const innerH = Math.max(50, H - margin.top - margin.bottom);
+
+  const svg = d3.select(host).append('svg')
+    .attr('class', 'cssz-chart')
+    .attr('viewBox', `0 0 ${W} ${H}`)
+    .attr('preserveAspectRatio', 'none');
+
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleLinear().domain([0, input.years]).range([0, innerW]);
+  const y = d3.scaleLinear()
+    .domain([0, d3.max(data, d => d.principal + d.interest)])
+    .nice()
+    .range([innerH, 0]);
+
+  const stack = d3.stack().keys(['interest', 'principal']);
+  const stacked = stack(data);
+
+  const area = d3.area()
+    .x(d => x(d.data.year))
+    .y0(d => y(d[0]))
+    .y1(d => y(d[1]));
+
+  g.selectAll('path.layer')
+    .data(stacked)
+    .enter().append('path')
+    .attr('class', d => `layer cssz-${d.key}`)
+    .attr('d', area);
+
+  g.append('g').attr('class', 'cssz-axis')
+    .attr('transform', `translate(0,${innerH})`)
+    .call(d3.axisBottom(x).ticks(Math.min(6, input.years)).tickFormat(v => `${v}y`));
+  g.append('g').attr('class', 'cssz-axis')
+    .call(d3.axisLeft(y).ticks(4).tickFormat(v => `$${Math.round(v)}`));
+}
+
+// When d3 arrives (async ESM import), re-render the current calc.
+window.addEventListener('d3-ready', () => { try { recalc(); } catch (_) {} });
+// Re-render on resize so the chart fills the container.
+window.addEventListener('resize', () => { try { renderChart(getInput()); } catch (_) {} });
 
 // Save action: commits current form values as the canonical scenario.
 // Updates URL hash, adds to recents, clears the modified state.
@@ -519,6 +626,14 @@ isc.VLayout.create({
       ]
     }),
     isc.Label.create({ ID: "result", height: 80, padding: 4, overflow: "hidden", contents: "" }),
+    isc.Label.create({ ID: "amortChartHost", height: 200, padding: 0, overflow: "hidden",
+      contents:
+        "<div class='cssz-chart-caption'>" +
+          "<span><span class='swatch principal'></span>Principal</span>" +
+          "<span><span class='swatch interest'></span>Interest</span>" +
+          "<span style='margin-left:auto;'>Monthly $ over time</span>" +
+        "</div>" +
+        "<div id='amortChart' style='width:100%;height:170px;'></div>" }),
     isc.HLayout.create({
       ID: "actionBar",
       height: 32,
