@@ -59,6 +59,46 @@
   }
   .cssz-chart-caption .swatch.principal { background: var(--cssz-accent, #4f46e5); opacity: 0.85; }
   .cssz-chart-caption .swatch.interest  { background: var(--cssz-muted, #999); opacity: 0.55; }
+
+  /* Loan-balance chart (filled area + line). Same theming model as the
+     amortization chart — fills resolve CSSZ vars at paint time. */
+  .cssz-chart .cssz-balance-area { fill: var(--cssz-accent, #4f46e5); opacity: 0.18; }
+  .cssz-chart .cssz-balance-line { stroke: var(--cssz-accent, #4f46e5); stroke-width: 2; fill: none; }
+
+  /* Affiliate CTA banner — contextual recommendation, not an ad block.
+     Subtle accent tint + left accent strip; primary button uses the
+     accent color so it picks up tenant brand when ?tenant=... is set. */
+  .cssz-cta {
+    display: flex; gap: 12px; align-items: center;
+    padding: 10px 14px;
+    background: color-mix(in srgb, var(--cssz-accent, #4f46e5) 8%, var(--cssz-surface, #fff));
+    border-left: 4px solid var(--cssz-accent, #4f46e5);
+    border-radius: var(--cssz-radius, 6px);
+  }
+  .cssz-cta .copy { flex: 1; min-width: 0; }
+  .cssz-cta .copy .head {
+    color: var(--cssz-text, #111); font-weight: 600; font-size: 13px;
+  }
+  .cssz-cta .copy .sub {
+    color: var(--cssz-muted, #666); font-size: 11.5px; margin-top: 2px;
+  }
+  .cssz-cta a.btn {
+    background: var(--cssz-accent, #4f46e5);
+    color: var(--cssz-on-accent, #fff);
+    padding: 7px 14px;
+    border-radius: var(--cssz-radius, 6px);
+    text-decoration: none;
+    font-size: 12px; font-weight: 500;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .cssz-cta a.btn:hover { opacity: 0.9; }
+
+  /* Section-internal helpers */
+  .cssz-section-empty {
+    color: var(--cssz-muted, #888); font-size: 12px; padding: 12px;
+    font-style: italic;
+  }
 </style>
 <style>
   /* Theme toggle (lives outside SC layout so it doesn't fight measurements) */
@@ -285,6 +325,8 @@ function recalc() {
     `</div>`
   );
   renderChart(input);
+  renderBalanceChart(input);
+  renderCTA(input);
   return out;
 }
 
@@ -367,10 +409,98 @@ function renderChart(input) {
     .call(d3.axisLeft(y).ticks(4).tickFormat(v => `$${Math.round(v)}`));
 }
 
+// Loan balance line chart — area + line showing remaining principal over time.
+// Lives in the "Loan balance over time" SectionStack section.
+function renderBalanceChart(input) {
+  if (!window.d3) return;
+  const d3 = window.d3;
+  const host = document.getElementById('balanceChartHost');
+  if (!host) return;
+  const sched = buildAmortization(input);
+  host.innerHTML = '';
+  if (!sched.length) return;
+
+  // Prepend the starting balance (year 0 = full loan).
+  const loan = Math.max(0, input.principal - (input.downPayment || 0));
+  let balance = loan;
+  const data = [{ year: 0, balance: loan }];
+  for (const m of sched) { balance -= m.principal; data.push({ year: m.year, balance: Math.max(0, balance) }); }
+
+  const W = host.clientWidth || 480;
+  const H = host.clientHeight || 224;
+  const margin = { top: 6, right: 8, bottom: 22, left: 56 };
+  const innerW = Math.max(50, W - margin.left - margin.right);
+  const innerH = Math.max(50, H - margin.top - margin.bottom);
+
+  const svg = d3.select(host).append('svg')
+    .attr('class', 'cssz-chart')
+    .attr('viewBox', `0 0 ${W} ${H}`)
+    .attr('preserveAspectRatio', 'none');
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleLinear().domain([0, input.years]).range([0, innerW]);
+  const y = d3.scaleLinear().domain([0, loan]).nice().range([innerH, 0]);
+
+  const area = d3.area().x(d => x(d.year)).y0(innerH).y1(d => y(d.balance));
+  const line = d3.line().x(d => x(d.year)).y(d => y(d.balance));
+
+  g.append('path').attr('class', 'cssz-balance-area').attr('d', area(data));
+  g.append('path').attr('class', 'cssz-balance-line').attr('d', line(data));
+
+  g.append('g').attr('class', 'cssz-axis')
+    .attr('transform', `translate(0,${innerH})`)
+    .call(d3.axisBottom(x).ticks(Math.min(6, input.years)).tickFormat(v => `${v}y`));
+  g.append('g').attr('class', 'cssz-axis')
+    .call(d3.axisLeft(y).ticks(4).tickFormat(v => `$${(v/1000).toFixed(0)}K`));
+}
+
+// ---- Dynamic affiliate CTA ------------------------------------------------
+// Computes a 15-year alternative and pitches the savings. Copy is generated
+// from the user's actual numbers — feels like insight, not advertising.
+// AFFILIATE: replace the example.com URL with the partner deep-link template.
+function compute15yrAlt(input) {
+  if ((input.years || 0) <= 15) return null;  // already 15yr or shorter
+  const alt = Object.assign({}, input, { years: 15 });
+  const altOut = calculate(alt);
+  const curOut = calculate(input);
+  if (!altOut || !curOut) return null;
+  const sched30 = buildAmortization(input);
+  const sched15 = buildAmortization(alt);
+  const interest30 = sched30.reduce((s, m) => s + m.interest, 0);
+  const interest15 = sched15.reduce((s, m) => s + m.interest, 0);
+  return {
+    monthly15: altOut.monthly,
+    monthlyDelta: altOut.monthly - curOut.monthly,
+    interestSaved: interest30 - interest15,
+  };
+}
+
+function renderCTA(input) {
+  const content = document.getElementById('ctaContent');
+  if (!content) return;
+  const alt = compute15yrAlt(input);
+  if (!alt) { content.innerHTML = ''; return; }
+  const fmt0 = n => n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  // Affiliate URL: stub. Replace example.com with the partner host. UTM params
+  // identify the source so the partner can revenue-share appropriately.
+  const ctaUrl = 'https://example.com/quote?term=15&loan=' + Math.round(input.principal - (input.downPayment||0)) +
+                 '&rate=' + input.rate + '&utm_source=ddd-mortgage&utm_medium=calculator&utm_campaign=15yr-savings';
+  content.innerHTML =
+    "<div class='cssz-cta'>" +
+      "<div class='copy'>" +
+        "<div class='head'>A 15-year loan saves you $" + fmt0(alt.interestSaved) + " in interest</div>" +
+        "<div class='sub'>Monthly: $" + fmt0(alt.monthly15) + " (+$" + fmt0(alt.monthlyDelta) + "/mo). Compare offers from our partners.</div>" +
+      "</div>" +
+      "<a class='btn' href='" + ctaUrl + "' target='_blank' rel='noopener'>Get a quote &rarr;</a>" +
+    "</div>";
+}
+
 // When d3 arrives (async ESM import), re-render the current calc.
 window.addEventListener('d3-ready', () => { try { recalc(); } catch (_) {} });
-// Re-render on resize so the chart fills the container.
-window.addEventListener('resize', () => { try { renderChart(getInput()); } catch (_) {} });
+// Re-render charts on resize so they fill their containers.
+window.addEventListener('resize', () => {
+  try { renderChart(getInput()); renderBalanceChart(getInput()); } catch (_) {}
+});
 
 // Save action: commits current form values as the canonical scenario.
 // Updates URL hash, adds to recents, clears the modified state.
@@ -650,6 +780,60 @@ isc.VLayout.create({
       ]
     }),
     isc.Label.create({ ID: "shareStatus", width: "100%", height: 22, padding: 2, contents: "" }),
+
+    // Dynamic affiliate CTA — populated from amortization data after Calculate.
+    // Reserve fixed height; renderCTA fills #ctaContent (or leaves empty when
+    // no alternative makes sense, e.g. user already chose 15-year term).
+    isc.Label.create({ ID: "ctaBanner", width: "100%", height: 70, padding: 0, overflow: "hidden",
+      contents: "<div id='ctaContent'></div>" }),
+
+    // SectionStack — "Explore your loan". Each section adds a chart or tool
+    // without sprawling the page. SC measures section heights; we don't
+    // override .sectionHeader/.sectionStack layout (adapter discipline).
+    isc.SectionStack.create({
+      ID: "exploreStack",
+      width: "100%",
+      height: 360,  // fits expanded section + 2 collapsed headers (~28px each)
+      visibilityMode: "multiple",
+      animateSections: true,
+      sections: [
+        {
+          ID: "section_balance",
+          title: "Loan balance over time",
+          expanded: true,
+          items: [
+            isc.Label.create({ ID: "balanceChartHostLabel", height: 240, padding: 8, overflow: "hidden",
+              contents: "<div id='balanceChartHost' style='width:100%;height:224px;'></div>" })
+          ]
+        },
+        {
+          ID: "section_breakdown",
+          title: "Year-by-year breakdown",
+          expanded: false,
+          items: [
+            isc.Label.create({ height: 60, padding: 8,
+              contents: "<div class='cssz-section-empty'>Per-year principal/interest/balance table — coming next.</div>" })
+          ]
+        },
+        {
+          ID: "section_compare",
+          title: "Compare with another scenario",
+          expanded: false,
+          items: [
+            isc.Label.create({ height: 60, padding: 8,
+              contents: "<div class='cssz-section-empty'>Pick a recent and overlay its amortization on this one — coming next.</div>" })
+          ]
+        }
+      ],
+      // Re-render the balance chart when the user expands its section
+      // (the host has 0 height while collapsed → first paint is empty).
+      sectionExpanded: function(section) {
+        if (section && section.ID === 'section_balance') {
+          try { renderBalanceChart(getInput()); } catch (_) {}
+        }
+      }
+    }),
+
     isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:var(--cssz-muted,#888);'>Recent scenarios (this device)</div>" }),
     // Label defaults to valign:"center" — that pushes a single recent row
     // to the middle of a 200px box. Force top-align so rows stack downward
