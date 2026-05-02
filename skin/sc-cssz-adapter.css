@@ -126,18 +126,32 @@
   background: var(--cssz-surface, #fff);
   border: 1px solid var(--cssz-border, #ababab);
 }
+/* Window header: visual-only overrides. SC sizes the header to the Window's
+   `headerHeight` property and reads its CSS height/padding back via
+   getComputedStyle; setting padding/display here would clip the close icon
+   and crop the title. Use box-shadow for a separator (doesn't affect layout)
+   instead of border-bottom (which would push content down inside SC's
+   measured height). */
 .sc .windowHeader {
   background: var(--cssz-window-bar-bg, var(--cssz-surface, #fafafa));
   color: var(--cssz-window-bar-text, var(--cssz-text, #000));
-  border-bottom: 1px solid var(--cssz-border, #ababab);
-  padding: 6px 10px;
-  display: flex; align-items: center; gap: 8px;
+  box-shadow: inset 0 -1px 0 var(--cssz-border, #ababab);
 }
 .sc .windowHeaderText {
   color: inherit;
   font-family: var(--cssz-font, inherit);
-  font-size: var(--cssz-fs, inherit);
   font-weight: 600;
+  /* Don't override font-size — Tahoe sizes the header for its 11px font.
+     If you need a larger header font, bump the Window's `headerHeight`
+     property in app code (e.g. headerHeight: 28). */
+}
+/* Tahoe's headerIcons (close.png, maximize.png, etc.) are near-white PNGs
+   designed for a dark header. On a light --cssz-window-bar-bg they vanish.
+   Recolor via filter; theme-modern.dark sets this to `none` so the original
+   light icons show against the dark header. */
+.sc .windowHeader img,
+.sc .windowHeader .imgButton img {
+  filter: var(--cssz-window-icon-filter, brightness(0));
 }
 .sc .windowBody {
   background: var(--cssz-surface, #fff);

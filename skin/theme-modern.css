@@ -107,4 +107,7 @@
 
   --cssz-input-bg: oklch(18% 0.01 270);
   --cssz-form-title: oklch(60% 0.01 270);
+
+  /* Tahoe's headerIcons are near-white — render as-is on dark header. */
+  --cssz-window-icon-filter: none;
 }
