@@ -175,12 +175,27 @@
 
 /* ---------- DynamicForm items ----------------------------------------------- */
 
-.sc .formCell {
+.sc .formCell,
+.sc .formCellFocused,
+.sc .formCellOver,
+.sc .formCellDisabled {
   display: grid; grid-template-columns: 140px 1fr; gap: 8px;
   padding: 5px 0; align-items: center;
 }
-.sc .formTitle {
+/* SC swaps .formTitle → .formTitleFocused/-Over/-Disabled per state.
+   Cover all four so the title stays consistent — focus is already shown
+   on the input itself via the --cssz-accent border + ring. */
+.sc .formTitle,
+.sc .formTitleFocused,
+.sc .formTitleOver {
   color: var(--cssz-form-title, var(--cssz-muted, #555));
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  text-align: var(--cssz-form-title-align, left);
+  font-weight: 500;
+}
+.sc .formTitleDisabled {
+  color: var(--cssz-text-mute, var(--cssz-muted, #999));
   font-family: var(--cssz-font, inherit);
   font-size: var(--cssz-fs, inherit);
   text-align: var(--cssz-form-title-align, left);
