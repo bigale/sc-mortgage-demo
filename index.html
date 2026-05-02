@@ -54,21 +54,32 @@
   }
   .cssz-chart .cssz-axis line,
   .cssz-chart .cssz-axis path { stroke: var(--cssz-border, #ccc); shape-rendering: crispEdges; }
+  /* Caption + swatches reused by the multi-line cumulative balance chart's
+     section header. Composition chart was removed in Calc Layout v2;
+     these classes still apply but the swatch colors evolved (now 3 series:
+     balance, cumulative principal, cumulative interest). */
   .cssz-chart-caption {
     font-size: 11px; color: var(--cssz-muted, #888);
-    margin: 0 0 4px; display: flex; gap: 12px; align-items: center;
+    margin: 0 0 4px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
   }
   .cssz-chart-caption .swatch {
     display: inline-block; width: 10px; height: 10px;
     border-radius: 2px; vertical-align: -1px; margin-right: 4px;
   }
-  .cssz-chart-caption .swatch.principal { background: var(--cssz-accent, #4f46e5); opacity: 0.85; }
-  .cssz-chart-caption .swatch.interest  { background: var(--cssz-muted, #999); opacity: 0.55; }
+  .cssz-chart-caption .swatch.balance      { background: var(--cssz-accent, #4f46e5); }
+  .cssz-chart-caption .swatch.cum-principal { background: var(--cssz-text, #111); }
+  .cssz-chart-caption .swatch.cum-interest  { background: var(--cssz-muted, #999); }
 
   /* Loan-balance chart (filled area + line). Same theming model as the
      amortization chart — fills resolve CSSZ vars at paint time. */
-  .cssz-chart .cssz-balance-area { fill: var(--cssz-accent, #4f46e5); opacity: 0.18; }
-  .cssz-chart .cssz-balance-line { stroke: var(--cssz-accent, #4f46e5); stroke-width: 2; fill: none; }
+  /* Multi-line cumulative balance chart (Calc Layout v2). Three series:
+     balance ↓ (accent), cumulative principal ↑ (text), cumulative interest ↑ (muted).
+     Lines cross late in the loan term (typ. year 18-22 for 30y/7%) — visceral
+     proof of the early-interest / late-principal pattern. */
+  .cssz-chart .cssz-balance-area     { fill: var(--cssz-accent, #4f46e5); opacity: 0.10; }
+  .cssz-chart .cssz-balance-line     { stroke: var(--cssz-accent, #4f46e5); stroke-width: 2; fill: none; }
+  .cssz-chart .cssz-cum-principal-line { stroke: var(--cssz-text, #111); stroke-width: 1.5; fill: none; }
+  .cssz-chart .cssz-cum-interest-line  { stroke: var(--cssz-muted, #999); stroke-width: 1.5; fill: none; stroke-dasharray: 4 3; }
 
   /* Affiliate CTA banner — contextual recommendation, not an ad block.
      Subtle accent tint + left accent strip; primary button uses the
@@ -103,6 +114,49 @@
   .cssz-section-empty {
     color: var(--cssz-muted, #888); font-size: 12px; padding: 12px;
     font-style: italic;
+  }
+
+  /* Details section (Calc Layout v2). Income input at top + 4 grouped rows
+     of all numeric/computed values. Per /sc-cssz-design discipline: CSSZ
+     vars only, no hex; renders via setContents (SectionStack DOM rule). */
+  .cssz-details-income {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 12px; color: var(--cssz-text, #111);
+  }
+  .cssz-details-income label { white-space: nowrap; }
+  .cssz-details-income input {
+    flex: 0 0 110px;
+    padding: 4px 6px;
+    font: inherit;
+    background: var(--cssz-input-bg, var(--cssz-surface, #fff));
+    color: var(--cssz-text, #000);
+    border: 1px solid var(--cssz-border, #ababab);
+    border-radius: var(--cssz-radius, 4px);
+    outline: none;
+  }
+  .cssz-details-income input:focus {
+    border-color: var(--cssz-accent, #4f46e5);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--cssz-accent, #4f46e5) 25%, transparent);
+  }
+  .cssz-details-income .hint {
+    font-size: 11px; color: var(--cssz-muted, #888);
+  }
+
+  .cssz-details-section { margin-bottom: 10px; }
+  .cssz-details-section-title {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--cssz-muted, #888);
+    margin-bottom: 4px; padding-bottom: 2px;
+    border-bottom: 1px solid var(--cssz-border-soft, var(--cssz-border, #eee));
+  }
+  .cssz-details-row {
+    display: flex; justify-content: space-between;
+    font-size: 12px; padding: 2px 0;
+    color: var(--cssz-text, #111);
+  }
+  .cssz-details-val {
+    font-family: var(--cssz-mono, ui-monospace, monospace);
+    font-weight: 500;
   }
 </style>
 <style>
@@ -254,6 +308,18 @@ async function saveRecent(input, output) {
 // derivation (which is a fallback when note_rate is undefined).
 // Per spec wire-domain-into-calc.md (Q3, /domain 2026-05-02): adapter lives
 // calc-side because calc is the only consumer of the 4-input shape.
+// Income state — soft requirement per /domain Q3. Default $65K (US median
+// household income reference). User adjusts via Details section's input.
+// inputToScenarioRow reads from this; renderDetails re-renders the grid
+// (but not the input itself — preserves focus during typing).
+let _incomeValue = 65000;
+
+function onIncomeChange(value) {
+  const n = Number(value);
+  _incomeValue = (Number.isFinite(n) && n >= 0) ? n : 65000;
+  try { recalc(); } catch (_) {}
+}
+
 function inputToScenarioRow(input) {
   const p = input.principal || 0;
   const dp = Math.min(input.downPayment || 0, p);  // cap at principal
@@ -261,7 +327,9 @@ function inputToScenarioRow(input) {
     purchase_price: p,
     down_pct: p > 0 ? (dp / p) * 100 : 0,
     term_years: input.years || 0,
-    note_rate: input.rate || 0,         // user-input rate is authoritative
+    note_rate: input.rate || 0,           // user-input rate is authoritative
+    annual_income_fallback: _incomeValue, // from Details income input
+    monthly_debts_fallback: 0,            // not surfaced in v1
     // Hidden defaults (8 unsurfaced parameters)
     loan_type: "Conventional",
     credit_tier: "Good",
@@ -270,7 +338,7 @@ function inputToScenarioRow(input) {
     region: "StandardCost",
     rate_structure: "FixedRate",
     points: 0,
-    rate_environment: "Current",        // ignored when note_rate is set
+    rate_environment: "Current",          // ignored when note_rate is set
   };
 }
 
@@ -363,8 +431,8 @@ function recalc() {
     `</div>` + pmiLine +
     `</div>`
   );
-  renderChart(input);
   renderBalanceChart(input);
+  renderDetails(input);
   renderCTA(input);
   return out;
 }
@@ -396,54 +464,10 @@ function buildAmortization(input) {
   });
 }
 
-function renderChart(input) {
-  if (!window.d3) return;  // d3 not loaded yet — d3-ready listener will retry
-  const d3 = window.d3;
-  const host = document.getElementById('amortChart');
-  if (!host) return;
-  const data = buildAmortization(input);
-  host.innerHTML = '';
-  if (!data.length) return;
-
-  const W = host.clientWidth || 480;
-  const H = host.clientHeight || 170;
-  const margin = { top: 6, right: 8, bottom: 22, left: 50 };
-  const innerW = Math.max(50, W - margin.left - margin.right);
-  const innerH = Math.max(50, H - margin.top - margin.bottom);
-
-  const svg = d3.select(host).append('svg')
-    .attr('class', 'cssz-chart')
-    .attr('viewBox', `0 0 ${W} ${H}`)
-    .attr('preserveAspectRatio', 'none');
-
-  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
-
-  const x = d3.scaleLinear().domain([0, input.years]).range([0, innerW]);
-  const y = d3.scaleLinear()
-    .domain([0, d3.max(data, d => d.principal + d.interest)])
-    .nice()
-    .range([innerH, 0]);
-
-  const stack = d3.stack().keys(['interest', 'principal']);
-  const stacked = stack(data);
-
-  const area = d3.area()
-    .x(d => x(d.data.year))
-    .y0(d => y(d[0]))
-    .y1(d => y(d[1]));
-
-  g.selectAll('path.layer')
-    .data(stacked)
-    .enter().append('path')
-    .attr('class', d => `layer cssz-${d.key}`)
-    .attr('d', area);
-
-  g.append('g').attr('class', 'cssz-axis')
-    .attr('transform', `translate(0,${innerH})`)
-    .call(d3.axisBottom(x).ticks(Math.min(6, input.years)).tickFormat(v => `${v}y`));
-  g.append('g').attr('class', 'cssz-axis')
-    .call(d3.axisLeft(y).ticks(4).tickFormat(v => `$${Math.round(v)}`));
-}
+// renderChart() removed in Calc Layout v2 (2026-05-02). Composition chart
+// (per-month stacked area) was redundant with the balance chart and added
+// vertical sprawl. Educational job migrated to the multi-line cumulative
+// balance chart in renderBalanceChart().
 
 // Loan balance line chart — area + line showing remaining principal over time.
 // Lives in the "Loan balance over time" SectionStack section.
@@ -464,10 +488,27 @@ function renderBalanceChart(input) {
     return;
   }
 
+  // Build three series from the per-month schedule:
+  //   balance        — remaining loan balance (decreasing)
+  //   cumPrincipal   — cumulative principal paid through month m (increasing)
+  //   cumInterest    — cumulative interest paid through month m (increasing)
+  // Lines cross late in the term — the educational reveal that the deleted
+  // composition chart was carrying.
   const loan = Math.max(0, input.principal - (input.downPayment || 0));
-  let balance = loan;
-  const data = [{ year: 0, balance: loan }];
-  for (const m of sched) { balance -= m.principal; data.push({ year: m.year, balance: Math.max(0, balance) }); }
+  let balance = loan, cumPrincipal = 0, cumInterest = 0;
+  const data = [{ year: 0, balance: loan, cumPrincipal: 0, cumInterest: 0 }];
+  for (const m of sched) {
+    balance -= m.principal;
+    cumPrincipal += m.principal;
+    cumInterest += m.interest;
+    data.push({
+      year: m.year,
+      balance: Math.max(0, balance),
+      cumPrincipal,
+      cumInterest,
+    });
+  }
+  const yMax = Math.max(loan, cumInterest);
 
   // Fixed viewBox + preserveAspectRatio="none" + 100%/100% sizing on the SVG
   // means the chart fills any container size SC gives us, even though we built
@@ -486,13 +527,17 @@ function renderBalanceChart(input) {
   const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
 
   const x = d3.scaleLinear().domain([0, input.years]).range([0, innerW]);
-  const y = d3.scaleLinear().domain([0, loan]).nice().range([innerH, 0]);
+  const y = d3.scaleLinear().domain([0, yMax]).nice().range([innerH, 0]);
 
+  // Filled area under balance line (visual emphasis on remaining principal).
   const area = d3.area().x(d => x(d.year)).y0(innerH).y1(d => y(d.balance));
-  const line = d3.line().x(d => x(d.year)).y(d => y(d.balance));
-
   g.append('path').attr('class', 'cssz-balance-area').attr('d', area(data));
-  g.append('path').attr('class', 'cssz-balance-line').attr('d', line(data));
+
+  // Three line series: balance, cumulative principal, cumulative interest.
+  const lineFor = key => d3.line().x(d => x(d.year)).y(d => y(d[key]));
+  g.append('path').attr('class', 'cssz-balance-line').attr('d', lineFor('balance')(data));
+  g.append('path').attr('class', 'cssz-cum-principal-line').attr('d', lineFor('cumPrincipal')(data));
+  g.append('path').attr('class', 'cssz-cum-interest-line').attr('d', lineFor('cumInterest')(data));
 
   g.append('g').attr('class', 'cssz-axis')
     .attr('transform', `translate(0,${innerH})`)
@@ -500,9 +545,115 @@ function renderBalanceChart(input) {
   g.append('g').attr('class', 'cssz-axis')
     .call(d3.axisLeft(y).ticks(4).tickFormat(v => `$${(v/1000).toFixed(0)}K`));
 
+  // Legend renders above the chart in the same Label content. SectionStack
+  // recreates the section item DOM on animate (per /sc-cssz-design rule),
+  // so legend lives in setContents — same lifecycle as the chart itself.
+  const legend =
+    "<div class='cssz-chart-caption' style='padding:0 0 4px;'>" +
+      "<span><span class='swatch balance'></span>Balance</span>" +
+      "<span><span class='swatch cum-principal'></span>Principal paid</span>" +
+      "<span><span class='swatch cum-interest'></span>Interest paid</span>" +
+    "</div>";
   balanceChartHostLabel.setContents(
-    "<div id='balanceChartHost' style='width:100%;height:224px;'>" + tmp.innerHTML + "</div>"
+    "<div id='balanceChartHost' style='width:100%;height:224px;display:flex;flex-direction:column;'>" +
+      legend +
+      "<div style='flex:1;min-height:0;'>" + tmp.innerHTML + "</div>" +
+    "</div>"
   );
+}
+
+// ---- Details section (Calc Layout v2) -------------------------------------
+// Income input + 4 grouped subsections of all numeric/computed values.
+// Renders into two SC Labels (detailsIncome + detailsGrid) inside the
+// section_details section of exploreStack.
+
+function setupDetailsIncome() {
+  if (!window.detailsIncome || !detailsIncome.setContents) return;
+  // Render the input with the CURRENT _incomeValue baked in. SC re-applies
+  // setContents when sections animate, so this string IS the source of truth
+  // — we never touch the live DOM input value directly. User typing fires
+  // oninput → onIncomeChange which updates _incomeValue but does NOT re-call
+  // setContents (preserves focus). When the section animates, the most
+  // recent setContents is replayed; we proactively setContents here on
+  // section open (handled in the click listener) so the latest value shows.
+  detailsIncome.setContents(
+    "<div class='cssz-details-income'>" +
+      "<label for='incomeInput'>Annual income</label>" +
+      "<input id='incomeInput' type='number' value='" + _incomeValue +
+        "' min='0' step='5000' oninput='onIncomeChange(this.value)'>" +
+      "<span class='hint'>US median ~$65K. Adjust to refine DTI.</span>" +
+    "</div>"
+  );
+}
+
+function renderDetails(input) {
+  if (!window.MortgageBundle) return;
+  if (!window.detailsGrid || !detailsGrid.setContents) return;
+  const MB = window.MortgageBundle;
+  const row = inputToScenarioRow(input);
+  const withVirtual = MB.applyVirtualParams(row, MB.mortgageDomain.virtualParameters || []);
+  const derived = MB.applyDerivations(withVirtual, MB.mortgageDomain.derivations);
+
+  const out = calculate(input);
+  if (!out) { detailsGrid.setContents(''); return; }
+
+  const fmt0 = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const fmt2 = (n) => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+  const pct  = (n, d) => Number(n).toFixed(d == null ? 2 : d) + '%';
+  const dtiSafe = Number.isFinite(Number(derived.dti)) && Number(derived.dti) < 999 ? pct(derived.dti) : '—';
+  const qmSafe  = derived.qm_status && derived.qm_status !== undefined ? String(derived.qm_status) : '—';
+
+  const sections = [
+    {
+      title: 'Loan',
+      rows: [
+        ['Loan amount',         '$' + fmt0(derived.loan_amount)],
+        ['LTV',                 pct(derived.ltv)],
+        ['Down payment %',      pct(out.dpPct * 100)],
+        ['Note rate',           pct(derived.note_rate)],
+        ['Monthly rate',        pct(Number(derived.note_rate) / 12, 4)],
+        ['Number of payments',  String(input.years * 12)],
+      ],
+    },
+    {
+      title: 'Monthly',
+      rows: [
+        ['Principal & Interest', '$' + fmt2(derived.monthly_pi)],
+        ['Tax & Insurance (est.)', '$' + fmt2(derived.est_tax_ins)],
+        ['Mortgage Insurance',   '$' + fmt2(out.pmi)],
+        ['Total monthly housing', '$' + fmt2(Number(derived.monthly_pi) + Number(derived.est_tax_ins) + Number(out.pmi))],
+      ],
+    },
+    {
+      title: 'Borrower',
+      rows: [
+        ['DTI',        dtiSafe],
+        ['QM Status',  qmSafe],
+      ],
+    },
+    {
+      title: 'Lifetime',
+      rows: [
+        ['Total interest', '$' + fmt0(derived.lifetime_interest)],
+        ['Total paid',     '$' + fmt0(out.total)],
+        ['Cash to close',  '$' + fmt0(derived.cash_to_close)],
+      ],
+    },
+  ];
+
+  const html = sections.map(function (s) {
+    return "<div class='cssz-details-section'>" +
+      "<div class='cssz-details-section-title'>" + escapeHtml(s.title) + "</div>" +
+      s.rows.map(function (r) {
+        return "<div class='cssz-details-row'>" +
+          "<span>" + escapeHtml(r[0]) + "</span>" +
+          "<span class='cssz-details-val'>" + escapeHtml(r[1]) + "</span>" +
+        "</div>";
+      }).join('') +
+    "</div>";
+  }).join('');
+
+  detailsGrid.setContents(html);
 }
 
 // ---- Dynamic affiliate CTA ------------------------------------------------
@@ -551,6 +702,7 @@ function renderCTA(input) {
 // a new section, add its expanded content height here and update the
 // SectionStack `sections` array. No other code change.
 const EXPLORE_SECTIONS = {
+  section_details:   516,  // 38 (income input) + 478 (4-group grid)
   section_balance:   240,
   section_breakdown: 60,
   section_compare:   60,
@@ -584,9 +736,14 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('[class*="sectionHeader"], [eventproxy^="isc_SectionHeader_"]')) return;
   setTimeout(() => {
     resizeExploreStack();
-    if (window.exploreStack && exploreStack.sectionIsExpanded &&
-        exploreStack.sectionIsExpanded('section_balance')) {
+    if (!window.exploreStack || !exploreStack.sectionIsExpanded) return;
+    // Re-render contents that were hidden while collapsed (host has 0 height
+    // → first render after expand would be empty otherwise).
+    if (exploreStack.sectionIsExpanded('section_balance')) {
       try { renderBalanceChart(getInput()); } catch (_) {}
+    }
+    if (exploreStack.sectionIsExpanded('section_details')) {
+      try { setupDetailsIncome(); renderDetails(getInput()); } catch (_) {}
     }
   }, 350);
 });
@@ -595,7 +752,7 @@ document.addEventListener('click', (e) => {
 window.addEventListener('d3-ready', () => { try { recalc(); } catch (_) {} });
 // Re-render charts on resize so they fill their containers.
 window.addEventListener('resize', () => {
-  try { renderChart(getInput()); renderBalanceChart(getInput()); } catch (_) {}
+  try { renderBalanceChart(getInput()); } catch (_) {}
 });
 
 // Save action: commits current form values as the canonical scenario.
@@ -840,27 +997,30 @@ function recentRow(r) {
     `<span style='${PICKER_ROW_MONTHLY_STYLE}'>${escapeHtml(monthly)}</span></a>`;
 }
 
-// Renders the Pick-a-scenario row: "Common scenarios" subsection (6 archetypes
-// from the bundle) followed by "Your saves" subsection (user recents from
-// localStorage). Both groups use the same row markup; mini-headers carry the
-// distinction. Per spec archetype-picker.md (Q2): no per-row badge.
-function rebuildPicker() {
+// Calc Layout v2 (2026-05-02): the Pick-a-scenario row split into two
+// independent surfaces — Picker sidebar (archetypes, beside form on desktop)
+// and Saves row (recents, below). Each renders into its own SC Label.
+// Mini-headers are now the section labels above each Label, not embedded
+// in contents. Per /sc-cssz-design discipline: render via setContents.
+function rebuildArchetypes() {
   const archs = (window.MortgageBundle && window.MortgageBundle.archetypes) || [];
-  const recents = getRecents();
-  const archHTML = archs.length
-    ? `<div style='${PICKER_HEADER_STYLE}'>Common scenarios</div>` +
-      archs.map(archetypeRow).join('')
-    : '';
-  const recentsHTML =
-    `<div style='${PICKER_HEADER_STYLE}'>Your saves</div>` +
-    (recents.length
-      ? recents.map(recentRow).join('')
-      : `<div style='${PICKER_EMPTY_STYLE}'>Your saves will appear here. Click <b>Save</b> after calculating.</div>`);
-  recentsList.setContents(archHTML + recentsHTML);
+  if (!window.archetypesList || !archetypesList.setContents) return;
+  archetypesList.setContents(archs.map(archetypeRow).join(''));
 }
 
-// Backward-compat alias: existing call sites use rebuildRecents.
-function rebuildRecents() { rebuildPicker(); }
+function rebuildSaves() {
+  const recents = getRecents();
+  if (!window.savesList || !savesList.setContents) return;
+  savesList.setContents(
+    recents.length
+      ? recents.map(recentRow).join('')
+      : `<div style='${PICKER_EMPTY_STYLE}'>Your saves will appear here. Click <b>Save</b> after calculating.</div>`
+  );
+}
+
+// Backward-compat alias: existing call sites use rebuildRecents. Now refreshes
+// both surfaces.
+function rebuildRecents() { rebuildArchetypes(); rebuildSaves(); }
 
 async function restoreFromHash() {
   const parsed = await parseHash();
@@ -895,9 +1055,140 @@ async function restoreFromHash() {
 }
 
 // ---- Bootstrap -------------------------------------------------------------
+// Calc Layout v2 (2026-05-02): adaptive root layout based on isc.Browser.isHandset.
+//   Desktop: HLayout(formColumn 520px, pickerSidebar 300px); root width 840.
+//   Handset: VLayout-flat — form/result/action/status + picker stacked.
+// Saves row stays at the bottom in both layouts. See spec calc-layout-v2.md.
+const _isHandset = !!(isc.Browser && isc.Browser.isHandset);
+
+// Form column widgets — same set in both layouts; just wrapped differently.
+const _formMembers = [
+  isc.DynamicForm.create({
+    ID: "calcForm",
+    width: "100%",
+    numCols: 2,
+    colWidths: [160, "*"],
+    titleOrientation: "left",
+    autoFocus: true,
+    // type:"text" not "float"/"integer". SC's FloatItem doesn't sync DOM →
+    // model in this setup; type:"text" + parseFloat in calculate() works.
+    // `changed` (post-commit), not `change` (per-keystroke).
+    fields: [
+      { name: "principal",   title: "Home Price ($)",     type: "text", defaultValue: "350000", changed: refreshStatus },
+      { name: "downPayment", title: "Down Payment ($)",   type: "text", defaultValue: "50000",  changed: refreshStatus },
+      { name: "rate",        title: "Interest Rate (%)",  type: "text", defaultValue: "7",      changed: refreshStatus },
+      { name: "years",       title: "Term (years)",       type: "text", defaultValue: "30",     changed: refreshStatus }
+    ]
+  }),
+  isc.Label.create({ ID: "result", height: 80, padding: 4, overflow: "hidden", contents: "" }),
+  isc.HLayout.create({
+    ID: "actionBar",
+    height: 32,
+    membersMargin: 6,
+    members: [
+      isc.Button.create({ ID: "btnCalc",        title: "Calculate",     width: 100,
+        click: function() { recalc(); refreshStatus(); } }),
+      isc.Button.create({ ID: "btnSave",        title: "Save",          width: 80,
+        click: function() { saveScenario(); } }),
+      isc.Button.create({ ID: "btnShareLive",   title: "Share Live",    width: 100,
+        click: function() { openShare('live'); } }),
+      isc.Button.create({ ID: "btnShareSnap",   title: "Share Snapshot", width: 130,
+        click: function() { openShare('snapshot'); } })
+    ]
+  }),
+  isc.Label.create({ ID: "shareStatus", width: "100%", height: 22, padding: 2, contents: "" }),
+];
+
+// Picker sidebar — Common scenarios only (saves split into its own row below).
+const _pickerMembers = [
+  isc.Label.create({ height: 18,
+    contents: "<div style='font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--cssz-muted,#888);'>Common scenarios</div>" }),
+  isc.Label.create({ ID: "archetypesList", height: 320, overflow: "auto",
+                     padding: 0, valign: "top", align: "left", contents: "" }),
+];
+
+// CTA + exploreStack + saves row — always at the bottom of root VLayout.
+const _ctaBanner = isc.Label.create({ ID: "ctaBanner", width: "100%", height: 70, padding: 0, overflow: "hidden",
+  contents: "<div id='ctaContent'></div>" });
+
+const _exploreStack = isc.SectionStack.create({
+  ID: "exploreStack",
+  width: "100%",
+  // Initial height: 4 headers (37×4) + balance content (240) + pad (4) = 392.
+  // Updated dynamically by resizeExploreStack() on init + every header click.
+  // Calc Layout v2 (2026-05-02): added section_details at position 0; default
+  // closed; opens with income input + 4-group derived-values grid.
+  height: 392,
+  visibilityMode: "multiple",
+  animateSections: true,
+  sections: [
+    {
+      ID: "section_details",
+      title: "Details — all values",
+      expanded: false,
+      items: [
+        isc.Label.create({ ID: "detailsIncome", height: 38, padding: 8, overflow: "hidden", contents: "" }),
+        isc.Label.create({ ID: "detailsGrid",   height: 478, padding: 8, overflow: "auto",   contents: "" }),
+      ]
+    },
+    {
+      ID: "section_balance",
+      title: "Loan balance over time",
+      expanded: true,
+      items: [
+        isc.Label.create({ ID: "balanceChartHostLabel", height: 240, padding: 8, overflow: "hidden",
+          contents: "<div id='balanceChartHost' style='width:100%;height:224px;'></div>" })
+      ]
+    },
+    {
+      ID: "section_breakdown",
+      title: "Year-by-year breakdown",
+      expanded: false,
+      items: [
+        isc.Label.create({ height: 60, padding: 8,
+          contents: "<div class='cssz-section-empty'>Per-year principal/interest/balance table — coming next.</div>" })
+      ]
+    },
+    {
+      ID: "section_compare",
+      title: "Compare with another scenario",
+      expanded: false,
+      items: [
+        isc.Label.create({ height: 60, padding: 8,
+          contents: "<div class='cssz-section-empty'>Pick a recent and overlay its amortization on this one — coming next.</div>" })
+      ]
+    }
+  ],
+  autoDraw: false
+});
+
+const _savesMembers = [
+  isc.Label.create({ height: 18,
+    contents: "<div style='font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--cssz-muted,#888);'>Your saves</div>" }),
+  isc.Label.create({ ID: "savesList", height: 160, overflow: "auto",
+                     padding: 0, valign: "top", align: "left", contents: "" }),
+];
+
+// Form-and-picker section: HLayout (desktop) wraps two columns; handset
+// flattens into the parent VLayout's members. Saves stays at the root level.
+const _formAndPicker = _isHandset
+  ? [..._formMembers, ..._pickerMembers]
+  : [
+      isc.HLayout.create({
+        width: "100%",
+        membersMargin: 16,
+        autoHeight: true,
+        members: [
+          isc.VLayout.create({ width: 520, autoHeight: true, members: _formMembers, autoDraw: false }),
+          isc.VLayout.create({ width: 300, autoHeight: true, members: _pickerMembers, autoDraw: false }),
+        ],
+        autoDraw: false,
+      })
+    ];
+
 isc.VLayout.create({
   ID: "root",
-  width: 520,
+  width: _isHandset ? 520 : 840,
   autoDraw: true,
   padding: 24,
   membersMargin: 12,
@@ -908,114 +1199,10 @@ isc.VLayout.create({
                 "<div style='font-size:11px;color:var(--cssz-muted,#888);'>Save scenarios via URL — works across devices, no account.</div>"
     }),
     isc.Label.create({ ID: "snapshotBanner", height: 1, visibility: "hidden", contents: "" }),
-    isc.DynamicForm.create({
-      ID: "calcForm",
-      width: "100%",
-      numCols: 2,
-      colWidths: [160, "*"],
-      titleOrientation: "left",
-      autoFocus: true,
-      // Use type:"text" instead of "float"/"integer". SC's FloatItem and
-      // IntegerItem don't sync DOM input -> model in this setup: typing
-      // updates the visible input but the SC model stays stale, and on
-      // blur the input reverts to the old value. Plain text fields don't
-      // have that issue. We parse to numbers in calculate(). The change
-      // handler is `changed` (singular, fires after value commit) rather
-      // than `change` (which on text fires per-keystroke and would defeat
-      // the explicit Calculate-button flow).
-      fields: [
-        { name: "principal",   title: "Home Price ($)",     type: "text", defaultValue: "350000", changed: refreshStatus },
-        { name: "downPayment", title: "Down Payment ($)",   type: "text", defaultValue: "50000",  changed: refreshStatus },
-        { name: "rate",        title: "Interest Rate (%)",  type: "text", defaultValue: "7",      changed: refreshStatus },
-        { name: "years",       title: "Term (years)",       type: "text", defaultValue: "30",     changed: refreshStatus }
-      ]
-    }),
-    isc.Label.create({ ID: "result", height: 80, padding: 4, overflow: "hidden", contents: "" }),
-    isc.Label.create({ ID: "amortChartHost", height: 200, padding: 0, overflow: "hidden",
-      contents:
-        "<div class='cssz-chart-caption'>" +
-          "<span><span class='swatch principal'></span>Principal</span>" +
-          "<span><span class='swatch interest'></span>Interest</span>" +
-          "<span style='margin-left:auto;'>Monthly $ over time</span>" +
-        "</div>" +
-        "<div id='amortChart' style='width:100%;height:170px;'></div>" }),
-    isc.HLayout.create({
-      ID: "actionBar",
-      height: 32,
-      membersMargin: 6,
-      members: [
-        isc.Button.create({ ID: "btnCalc",        title: "Calculate",     width: 100,
-          click: function() { recalc(); refreshStatus(); } }),
-        isc.Button.create({ ID: "btnSave",        title: "Save",          width: 80,
-          click: function() { saveScenario(); } }),
-        isc.Button.create({ ID: "btnShareLive",   title: "Share Live",    width: 100,
-          click: function() { openShare('live'); } }),
-        isc.Button.create({ ID: "btnShareSnap",   title: "Share Snapshot", width: 130,
-          click: function() { openShare('snapshot'); } })
-      ]
-    }),
-    isc.Label.create({ ID: "shareStatus", width: "100%", height: 22, padding: 2, contents: "" }),
-
-    // Dynamic affiliate CTA — populated from amortization data after Calculate.
-    // Reserve fixed height; renderCTA fills #ctaContent (or leaves empty when
-    // no alternative makes sense, e.g. user already chose 15-year term).
-    isc.Label.create({ ID: "ctaBanner", width: "100%", height: 70, padding: 0, overflow: "hidden",
-      contents: "<div id='ctaContent'></div>" }),
-
-    // SectionStack — "Explore your loan". Each section adds a chart or tool
-    // without sprawling the page. SC measures section heights; we don't
-    // override .sectionHeader/.sectionStack layout (adapter discipline).
-    isc.SectionStack.create({
-      ID: "exploreStack",
-      width: "100%",
-      // Initial height: 3 headers (37×3) + balance content (240) + pad (4) = 355.
-      // Updated dynamically by resizeExploreStack() on init + every header click.
-      height: 355,
-      visibilityMode: "multiple",
-      animateSections: true,
-      sections: [
-        {
-          ID: "section_balance",
-          title: "Loan balance over time",
-          expanded: true,
-          items: [
-            isc.Label.create({ ID: "balanceChartHostLabel", height: 240, padding: 8, overflow: "hidden",
-              contents: "<div id='balanceChartHost' style='width:100%;height:224px;'></div>" })
-          ]
-        },
-        {
-          ID: "section_breakdown",
-          title: "Year-by-year breakdown",
-          expanded: false,
-          items: [
-            isc.Label.create({ height: 60, padding: 8,
-              contents: "<div class='cssz-section-empty'>Per-year principal/interest/balance table — coming next.</div>" })
-          ]
-        },
-        {
-          ID: "section_compare",
-          title: "Compare with another scenario",
-          expanded: false,
-          items: [
-            isc.Label.create({ height: 60, padding: 8,
-              contents: "<div class='cssz-section-empty'>Pick a recent and overlay its amortization on this one — coming next.</div>" })
-          ]
-        }
-      ],
-      // SC's sectionExpanded/sectionCollapsed callbacks fire inconsistently
-      // across versions. We instead listen for clicks on any section header
-      // (delegated below in script) and poll the section state after the
-      // animation settles. Robust across SC versions and works for both
-      // user clicks and programmatic toggles via expandSection().
-      autoDraw: false  // avoid the "drawn before parent" warning + re-parent quirk
-    }),
-
-    isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:var(--cssz-muted,#888);'>Pick a scenario</div>" }),
-    // Label defaults to valign:"center" — that pushes a single recent row
-    // to the middle of a 200px box. Force top-align so rows stack downward
-    // as they're added.
-    isc.Label.create({ ID: "recentsList", height: 320, overflow: "auto",
-                       padding: 0, valign: "top", align: "left", contents: "" })
+    ..._formAndPicker,
+    _ctaBanner,
+    _exploreStack,
+    ..._savesMembers,
   ]
 });
 
