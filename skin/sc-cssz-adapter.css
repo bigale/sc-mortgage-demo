@@ -380,3 +380,74 @@
 .sc .icon {
   color: var(--cssz-icon, currentColor);
 }
+
+/* ---------- Smooth theme transitions ---------------------------------------- */
+/* When the body class flips between light/dark or light/tenant, color changes
+   glide instead of snap. transition is layout-safe — SC doesn't read it via
+   getComputedStyle. :where() keeps specificity 0 so SC's own rules still win. */
+
+body { transition: background-color 0.2s, color 0.2s; }
+.sc :where(
+  .button, .buttonOver, .buttonDown, .buttonSelected, .buttonPrimary,
+  .buttonDisabled, .buttonFocused,
+  .windowBackground, .windowHeader, .windowBody, .dialogBody,
+  .textItem, .textItemLite, .textItemFocused, .textItemLiteFocused,
+  .textAreaItem, .textAreaItemLite, .selectItem, .selectItemText,
+  .sectionStack, .sectionHeader, .sectionItem,
+  .listGrid, .gridHeader, .gridBody, .gridRow, .listGridCell,
+  .gridRowOver, .gridRowSelected,
+  .tabBar, .tab, .tabSelected, .tabBody,
+  .toolStrip, .toolStripSeparator,
+  .dateChooser, .dateChooserHeader, .dateCell
+) {
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+}
+
+/* ---------- Scenario-load animation ----------------------------------------- */
+/* Triggered by adding `.cssz-loading` to <body> after a new scenario hydrates
+   (URL hash change, recent click). Self-clearing via setTimeout in app code.
+   - Form fields flash with a brief accent tint
+   - The result panel (wrapped in .cssz-result by app) fades + slides in
+   Both honor prefers-reduced-motion. */
+
+@keyframes cssz-field-flash {
+  /* sRGB blend — oklch hue interpolation rotates through unrelated hues
+     (e.g. warm-white 95° + indigo 270° passes through 180° green territory). */
+  0%   { background: var(--cssz-input-bg, var(--cssz-surface, #fff)); }
+  30%  { background: color-mix(in srgb, var(--cssz-accent, #4f46e5) 15%, var(--cssz-input-bg, #fff)); }
+  100% { background: var(--cssz-input-bg, var(--cssz-surface, #fff)); }
+}
+body.cssz-loading .textItem,
+body.cssz-loading .textItemLite,
+body.cssz-loading .textItemLiteFocused,
+body.cssz-loading .textItemFocused {
+  animation: cssz-field-flash 700ms ease-out;
+}
+
+@keyframes cssz-result-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+body.cssz-loading .cssz-result {
+  animation: cssz-result-in 400ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body, .sc :where(.button, .buttonOver, .buttonDown, .buttonSelected,
+    .buttonPrimary, .buttonDisabled, .buttonFocused, .windowBackground,
+    .windowHeader, .windowBody, .dialogBody, .textItem, .textItemLite,
+    .textItemFocused, .textItemLiteFocused, .textAreaItem, .textAreaItemLite,
+    .selectItem, .selectItemText, .sectionStack, .sectionHeader, .sectionItem,
+    .listGrid, .gridHeader, .gridBody, .gridRow, .listGridCell, .gridRowOver,
+    .gridRowSelected, .tabBar, .tab, .tabSelected, .tabBody, .toolStrip,
+    .toolStripSeparator, .dateChooser, .dateChooserHeader, .dateCell) {
+    transition: none !important;
+  }
+  body.cssz-loading .textItem,
+  body.cssz-loading .textItemLite,
+  body.cssz-loading .textItemLiteFocused,
+  body.cssz-loading .textItemFocused,
+  body.cssz-loading .cssz-result {
+    animation: none !important;
+  }
+}

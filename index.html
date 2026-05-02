@@ -56,6 +56,19 @@
     const dark = stored === 'dark' || (stored === null && systemDark);
     if (dark) document.documentElement.classList.add('preload-dark');
   })();
+  // Tenant white-label: ?tenant=<name> loads skin/theme-<name>.css and adds
+  // class theme-<name> to <body>. Whitelist guards against arbitrary CSS load.
+  (function applyTenant() {
+    const tenant = new URLSearchParams(location.search).get('tenant');
+    const allowed = ['sunset'];
+    if (tenant && allowed.includes(tenant)) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'skin/theme-' + tenant + '.css';
+      document.head.appendChild(link);
+      window.__tenant = tenant;
+    }
+  })();
 </script>
 <style>
   /* Apply early — before body class — so the page background paints correctly. */
@@ -79,6 +92,8 @@ function toggleTheme() {
   localStorage.setItem('sc-mortgage:theme', dark ? 'dark' : 'light');
 }
 applyTheme(document.documentElement.classList.contains('preload-dark'));
+// Sync tenant decision (made in <head>) onto <body> so theme-<tenant> applies.
+if (window.__tenant) document.body.classList.add('theme-' + window.__tenant);
 </script>
 <script>
 // ---- Scenario encoding (per EDGE_SUBSTRATE_ARCHITECTURE.md) -------------
@@ -216,7 +231,7 @@ function recalc() {
   const input = getInput();
   const out = calculate(input);
   if (!out) {
-    result.setContents("<div style='color:var(--cssz-muted,#888);font-size:13px;'>Enter loan amount, rate, and term, then click Calculate.</div>");
+    result.setContents("<div class='cssz-result' style='color:var(--cssz-muted,#888);font-size:13px;'>Enter loan amount, rate, and term, then click Calculate.</div>");
     return null;
   }
   const fmt0 = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -225,16 +240,29 @@ function recalc() {
   const pmiLine = out.pmi > 0
     ? `<div style='color:#c75300;font-size:12px;margin-top:4px;'>PMI estimate: <b>+$${fmt2(out.pmi)}/mo</b> (down payment ${(out.dpPct * 100).toFixed(0)}% &lt; 20%)</div>`
     : '';
+  // Wrap in .cssz-result so the scenario-load animation can target it.
   result.setContents(
+    `<div class='cssz-result'>` +
     `<div style='font-size:24px;color:var(--cssz-accent,#1976d2);font-weight:600;'>$${fmt2(out.monthly)}` +
     `<span style='font-size:14px;color:var(--cssz-muted,#666);font-weight:400;'> / month P&I</span></div>` +
     `<div style='margin-top:6px;font-size:13px;color:var(--cssz-text,#555);'>` +
       `Loan: <b>$${fmt0(out.loan)}</b> &middot; ` +
       `Total paid: <b>$${fmt0(out.total)}</b> &middot; ` +
       `Interest: <b>$${fmt0(out.interest)}</b>` +
-    `</div>` + pmiLine
+    `</div>` + pmiLine +
+    `</div>`
   );
   return out;
+}
+
+// Plays the scenario-load animation (CSS-driven via body.cssz-loading).
+// Self-clears so it can fire again on the next hashchange/recent click.
+function playLoadAnimation() {
+  document.body.classList.remove('cssz-loading');
+  // Force reflow so the animation restarts even if the class was just removed.
+  void document.body.offsetWidth;
+  document.body.classList.add('cssz-loading');
+  setTimeout(() => document.body.classList.remove('cssz-loading'), 800);
 }
 
 // Save action: commits current form values as the canonical scenario.
@@ -433,6 +461,7 @@ async function restoreFromHash() {
   };
   calcForm.setValues(restoredInput);
   recalc();
+  playLoadAnimation();
   // Mark this as the saved baseline — edits-against-it will trigger Modified.
   lastSavedInputJson = JSON.stringify(restoredInput);
   refreshStatus();
