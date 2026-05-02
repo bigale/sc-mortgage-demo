@@ -793,7 +793,12 @@ isc.VLayout.create({
     isc.SectionStack.create({
       ID: "exploreStack",
       width: "100%",
-      height: 360,  // fits expanded section + 2 collapsed headers (~28px each)
+      // Tall enough for ALL sections expanded simultaneously: 3 headers (~28px)
+      // + balance chart (240) + breakdown placeholder (60) + compare placeholder
+      // (60). Fixed-height SectionStack clips overflow; overflow:"visible"
+      // belt-and-braces lets content extend if any section grows in the future.
+      height: 460,
+      overflow: "visible",
       visibilityMode: "multiple",
       animateSections: true,
       sections: [
