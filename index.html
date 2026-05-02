@@ -323,6 +323,9 @@ function onIncomeChange(value) {
 function inputToScenarioRow(input) {
   const p = input.principal || 0;
   const dp = Math.min(input.downPayment || 0, p);  // cap at principal
+  // Form Expansion (2026-05-02): loan_type/credit_tier/occupancy come from
+  // input (sourced from advancedForm via getInput). Fall back to pre-expansion
+  // defaults when input doesn't carry them (e.g., unit-test direct calls).
   return {
     purchase_price: p,
     down_pct: p > 0 ? (dp / p) * 100 : 0,
@@ -330,11 +333,11 @@ function inputToScenarioRow(input) {
     note_rate: input.rate || 0,           // user-input rate is authoritative
     annual_income_fallback: _incomeValue, // from Details income input
     monthly_debts_fallback: 0,            // not surfaced in v1
-    // Hidden defaults (8 unsurfaced parameters)
-    loan_type: "Conventional",
-    credit_tier: "Good",
+    loan_type:   input.loan_type   || "Conventional",
+    credit_tier: input.credit_tier || "Good",
+    occupancy:   input.occupancy   || "Primary",
+    // Remaining hidden defaults (deferred to v3 per spec out-of-scope).
     property_type: "SFH",
-    occupancy: "Primary",
     region: "StandardCost",
     rate_structure: "FixedRate",
     points: 0,
@@ -369,11 +372,17 @@ let suppressUrlUpdate = false;
 
 function getInput() {
   const v = calcForm.getValues();
+  // Form Expansion: merge advancedForm values when present. Defensive guard
+  // for the brief window during boot before advancedForm is created.
+  const adv = (window.advancedForm && advancedForm.getValues) ? advancedForm.getValues() : {};
   return {
     principal:    parseFloat(v.principal) || 0,
     downPayment:  parseFloat(v.downPayment) || 0,
     rate:         parseFloat(v.rate) || 0,
     years:        parseInt(v.years, 10) || 0,
+    loan_type:    adv.loan_type   || "Conventional",
+    credit_tier:  adv.credit_tier || "Good",
+    occupancy:    adv.occupancy   || "Primary",
   };
 }
 
@@ -930,11 +939,17 @@ async function loadArchetype(id) {
   if (!a) return;
   const principal = Number(a.scenario.purchase_price);
   const downPayment = principal * Number(a.scenario.down_pct) / 100;
+  // Form Expansion: include 3 advanced fields from the archetype's scenario
+  // so restoreFromHash can pick them up + auto-expand the advanced section.
+  // Picker click → user can SEE what loan_type/credit_tier/occupancy got set.
   const input = {
     principal,
     downPayment,
     rate: a.displayedRate,
     years: Number(a.scenario.term_years),
+    loan_type:   String(a.scenario.loan_type   || "Conventional"),
+    credit_tier: String(a.scenario.credit_tier || "Good"),
+    occupancy:   String(a.scenario.occupancy   || "Primary"),
   };
   const hash = await encodeScenario(input);
   location.hash = 'i=' + hash;
@@ -1032,10 +1047,29 @@ async function restoreFromHash() {
     years:       parsed.i.years || 0,
   };
   calcForm.setValues(restoredInput);
+  // Form Expansion: tolerant decode of advanced fields. Old hashes (no
+  // advanced keys) leave advancedForm at defaults — backwards-compat.
+  // New hashes encoded post-expansion carry all 7 keys.
+  const advRestored = {};
+  if (parsed.i.loan_type)   advRestored.loan_type   = parsed.i.loan_type;
+  if (parsed.i.credit_tier) advRestored.credit_tier = parsed.i.credit_tier;
+  if (parsed.i.occupancy)   advRestored.occupancy   = parsed.i.occupancy;
+  if (window.advancedForm && advancedForm.setValues) {
+    if (Object.keys(advRestored).length) {
+      advancedForm.setValues(advRestored);
+      // Auto-expand when hash carries non-default advanced fields, so the
+      // friend opening a shared link can SEE what loan_type/etc. was set.
+      toggleAdvanced(true);
+    } else {
+      // Reset to pre-expansion defaults for old hashes (clean slate).
+      advancedForm.setValues({ loan_type: "Conventional", credit_tier: "Good", occupancy: "Primary" });
+    }
+  }
   recalc();
   playLoadAnimation();
   // Mark this as the saved baseline — edits-against-it will trigger Modified.
-  lastSavedInputJson = JSON.stringify(restoredInput);
+  // Use full getInput() snapshot so isModified() compares against all 7 fields.
+  lastSavedInputJson = JSON.stringify(getInput());
   refreshStatus();
   if (parsed.mode === 'snapshot' && parsed.o) {
     const captured = new Date(parsed.t).toLocaleString();
@@ -1055,11 +1089,82 @@ async function restoreFromHash() {
 }
 
 // ---- Bootstrap -------------------------------------------------------------
-// Calc Layout v2 (2026-05-02): adaptive root layout based on isc.Browser.isHandset.
+// Calc Layout v2 (2026-05-02): adaptive root layout — handset vs desktop.
 //   Desktop: HLayout(formColumn 520px, pickerSidebar 300px); root width 840.
 //   Handset: VLayout-flat — form/result/action/status + picker stacked.
 // Saves row stays at the bottom in both layouts. See spec calc-layout-v2.md.
-const _isHandset = !!(isc.Browser && isc.Browser.isHandset);
+//
+// Detection: prefer SC's isc.Browser.isHandset (uses touch + UA + width on
+// real devices), but fall back to a viewport-width threshold (<840) for
+// browsers where SC's touch detection misses (Chromium under Playwright,
+// narrow desktop windows, DevTools mobile mode). The 840 threshold matches
+// the desktop root width — at smaller widths we'd horizontally scroll anyway.
+const _scHandset    = !!(isc.Browser && isc.Browser.isHandset);
+const _narrowViewport = (typeof window !== 'undefined' && window.innerWidth < 840);
+const _isHandset    = _scHandset || _narrowViewport;
+
+// Build SelectItem valueMap from a domain enum parameter — keeps dropdowns
+// in sync with the bundle's allowed values (see spec form-expansion.md).
+// Falls back to a hardcoded list if the bundle didn't load (defensive).
+function _enumValueMap(paramName, fallback) {
+  const params = (window.MortgageBundle && window.MortgageBundle.mortgageDomain
+                  && window.MortgageBundle.mortgageDomain.parameters) || [];
+  const p = params.find(x => x.name === paramName);
+  const values = (p && p.kind && p.kind.values) || fallback;
+  const out = {};
+  for (const v of values) out[v] = String(v);
+  return out;
+}
+
+const ADV_KEY = 'sc-mortgage:advanced-shown';
+function _isAdvShown() {
+  try { return localStorage.getItem(ADV_KEY) === '1'; } catch { return false; }
+}
+function _setAdvShown(shown) {
+  try { localStorage.setItem(ADV_KEY, shown ? '1' : '0'); } catch {}
+}
+// Toggle: show/hide advancedForm + persist preference + update link text.
+// Optional `force` param lets archetype/hash restore force-expand without
+// flipping based on current state.
+function toggleAdvanced(force) {
+  if (!window.advancedForm) return;
+  const target = (typeof force === 'boolean') ? force : !advancedForm.isVisible();
+  if (target) advancedForm.show(); else advancedForm.hide();
+  _setAdvShown(target);
+  if (window.advancedToggle && advancedToggle.setContents) {
+    advancedToggle.setContents(_advancedToggleHtml(target));
+  }
+}
+function _advancedToggleHtml(shown) {
+  const label = shown ? 'Hide advanced options' : 'Show advanced options';
+  return "<a href='#' onclick='toggleAdvanced();return false;' " +
+    "style='font-size:11px;color:var(--cssz-muted,#888);text-decoration:none;border-bottom:1px dotted var(--cssz-muted,#888);'>" +
+    label + "</a>";
+}
+
+// When loan_type or credit_tier changes, recompute the displayed rate via the
+// domain's baseRate() — same behavior as archetype click. This is what makes
+// the "FHA borrower sees FHA-adjusted rate" user story actually work; otherwise
+// the user-typed rate stays authoritative and the dropdown is cosmetic.
+// Occupancy doesn't affect rate (only constraints), so it's not handled here.
+function _recomputeDisplayedRate() {
+  if (!window.MortgageBundle || !MortgageBundle.baseRate) return;
+  const adv = (window.advancedForm && advancedForm.getValues) ? advancedForm.getValues() : {};
+  const loanType   = adv.loan_type   || "Conventional";
+  const creditTier = adv.credit_tier || "Good";
+  const v = (window.calcForm && calcForm.getValues) ? calcForm.getValues() : {};
+  const principal  = parseFloat(v.principal) || 0;
+  const downPct    = principal > 0 ? (parseFloat(v.downPayment) || 0) / principal : 0;
+  const ltv        = (1 - downPct) * 100;
+  const term       = parseInt(v.years, 10) || 30;
+  const points     = 0;        // not surfaced in v1; archetype default
+  const env        = "Current"; // not surfaced; archetype default
+  const next = MortgageBundle.baseRate(env, loanType, term, points, creditTier, ltv);
+  if (Number.isFinite(next) && window.calcForm && calcForm.setValue) {
+    // Round to 3 decimals — baseRate returns float, calc displays text.
+    calcForm.setValue('rate', String(Math.round(next * 1000) / 1000));
+  }
+}
 
 // Form column widgets — same set in both layouts; just wrapped differently.
 const _formMembers = [
@@ -1080,21 +1185,66 @@ const _formMembers = [
       { name: "years",       title: "Term (years)",       type: "text", defaultValue: "30",     changed: refreshStatus }
     ]
   }),
+  // Advanced toggle (link). Sits between the 4-input form and the advancedForm.
+  // Compact, unobtrusive — matches first-impression invariant from spec.
+  isc.Label.create({ ID: "advancedToggle", height: 18, padding: 2, overflow: "hidden",
+                     contents: _advancedToggleHtml(_isAdvShown()) }),
+  // advancedForm: 3 SelectItems for loan_type / credit_tier / occupancy.
+  // valueMaps derived from mortgageDomain.parameters (kept in sync with bundle).
+  // Defaults match the previously-hardcoded values in inputToScenarioRow,
+  // so users who never expand this section see unchanged math.
+  isc.DynamicForm.create({
+    ID: "advancedForm",
+    width: "100%",
+    numCols: 2,
+    colWidths: [160, "*"],
+    titleOrientation: "left",
+    // Initial visibility set via show()/hide() in init() after layout draw —
+    // SC's `visibility: "hidden"` config can leave layout artifacts in some
+    // versions; show()/hide() cleanly toggles `display: none`-equivalent.
+    fields: [
+      { name: "loan_type",   title: "Loan Type",   type: "select",
+        defaultValue: "Conventional",
+        valueMap: _enumValueMap("loan_type",   ["Conventional","FHA","VA","USDA","Jumbo"]),
+        changed: function() { _recomputeDisplayedRate(); recalc(); refreshStatus(); } },
+      { name: "credit_tier", title: "Credit Tier", type: "select",
+        defaultValue: "Good",
+        valueMap: _enumValueMap("credit_tier", ["Excellent","Good","Fair","Subprime"]),
+        changed: function() { _recomputeDisplayedRate(); recalc(); refreshStatus(); } },
+      { name: "occupancy",   title: "Occupancy",   type: "select",
+        defaultValue: "Primary",
+        valueMap: _enumValueMap("occupancy",   ["Primary","SecondHome","Investment"]),
+        changed: function() { recalc(); refreshStatus(); } }
+    ]
+  }),
   isc.Label.create({ ID: "result", height: 80, padding: 4, overflow: "hidden", contents: "" }),
   isc.HLayout.create({
     ID: "actionBar",
     height: 32,
     membersMargin: 6,
-    members: [
-      isc.Button.create({ ID: "btnCalc",        title: "Calculate",     width: 100,
-        click: function() { recalc(); refreshStatus(); } }),
-      isc.Button.create({ ID: "btnSave",        title: "Save",          width: 80,
-        click: function() { saveScenario(); } }),
-      isc.Button.create({ ID: "btnShareLive",   title: "Share Live",    width: 100,
-        click: function() { openShare('live'); } }),
-      isc.Button.create({ ID: "btnShareSnap",   title: "Share Snapshot", width: 130,
-        click: function() { openShare('snapshot'); } })
-    ]
+    // Handset: shrink labels so all 4 buttons fit in the narrowed form column.
+    // 4 buttons + 3 margins = ~360px on iPhone SE (375 viewport - 16 padding).
+    members: _isHandset
+      ? [
+          isc.Button.create({ ID: "btnCalc",        title: "Calc",     width: 70,
+            click: function() { recalc(); refreshStatus(); } }),
+          isc.Button.create({ ID: "btnSave",        title: "Save",     width: 70,
+            click: function() { saveScenario(); } }),
+          isc.Button.create({ ID: "btnShareLive",   title: "Live",     width: 70,
+            click: function() { openShare('live'); } }),
+          isc.Button.create({ ID: "btnShareSnap",   title: "Snapshot", width: 90,
+            click: function() { openShare('snapshot'); } })
+        ]
+      : [
+          isc.Button.create({ ID: "btnCalc",        title: "Calculate",     width: 100,
+            click: function() { recalc(); refreshStatus(); } }),
+          isc.Button.create({ ID: "btnSave",        title: "Save",          width: 80,
+            click: function() { saveScenario(); } }),
+          isc.Button.create({ ID: "btnShareLive",   title: "Share Live",    width: 100,
+            click: function() { openShare('live'); } }),
+          isc.Button.create({ ID: "btnShareSnap",   title: "Share Snapshot", width: 130,
+            click: function() { openShare('snapshot'); } })
+        ]
   }),
   isc.Label.create({ ID: "shareStatus", width: "100%", height: 22, padding: 2, contents: "" }),
 ];
@@ -1186,11 +1336,19 @@ const _formAndPicker = _isHandset
       })
     ];
 
+// Handset width: clamp to actual viewport so iPhone (390-430px) doesn't get
+// horizontal scroll from a hardcoded 520. Padding shrinks too on narrow screens.
+const _vw = (typeof window !== 'undefined' && window.innerWidth) ? window.innerWidth : 520;
+const _handsetPadding = _vw < 420 ? 8 : 16;
+const _handsetWidth = Math.min(520, _vw - _handsetPadding * 2);
+const _rootWidth   = _isHandset ? _handsetWidth   : 840;
+const _rootPadding = _isHandset ? _handsetPadding : 24;
+
 isc.VLayout.create({
   ID: "root",
-  width: _isHandset ? 520 : 840,
+  width: _rootWidth,
   autoDraw: true,
-  padding: 24,
+  padding: _rootPadding,
   membersMargin: 12,
   members: [
     isc.Label.create({
@@ -1208,6 +1366,11 @@ isc.VLayout.create({
 
 (async function init() {
   resizeExploreStack();
+  // Apply persisted advanced-toggle state. Done before restoreFromHash so
+  // a hash with advanced fields can override (force-expand).
+  if (window.advancedForm) {
+    if (_isAdvShown()) advancedForm.show(); else advancedForm.hide();
+  }
   const restored = await restoreFromHash();
   if (!restored) {
     // Fresh load — show defaults but don't auto-calculate. The user drives
