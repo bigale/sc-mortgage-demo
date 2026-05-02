@@ -763,25 +763,104 @@ async function openShare(mode) {
   win.show();
 }
 
-function rebuildRecents() {
-  const recents = getRecents();
-  if (recents.length === 0) {
-    recentsList.setContents("<em style='color:var(--cssz-muted,#888);font-size:12px;'>No saved scenarios yet. Click <b>Save</b> after calculating.</em>");
-    return;
-  }
-  const rows = recents.map((r) => {
-    const monthly = r.monthly ? `$${r.monthly.toLocaleString('en-US', { maximumFractionDigits: 0 })}/mo` : '';
-    // Setting location.hash triggers hashchange -> restoreFromHash, which
-    // populates the form, recalcs, and updates status all in one path.
-    // void(...) suppresses the assignment's return value — without it, the
-    // browser would render the resulting string as the entire page body
-    // (a classic javascript: URL footgun).
-    return `<a href='javascript:void(location.hash="i=${r.hash}")' ` +
-           `style='display:flex;justify-content:space-between;padding:4px 8px;text-decoration:none;color:var(--cssz-text,#333);border-bottom:1px solid var(--cssz-border-soft,#eee);'>` +
-           `<span>${escapeHtml(r.label)}</span><span style='color:var(--cssz-accent,#1976d2);'>${escapeHtml(monthly)}</span></a>`;
-  }).join('');
-  recentsList.setContents(rows);
+// Click dispatcher for archetype rows. Computes the calc's 4-input hash from
+// the archetype's full ScenarioRow + displayedRate, then sets location.hash
+// (triggers existing hashchange → restoreFromHash → form/chart update flow).
+// Per spec archetype-picker.md: same flow as recents, no new URL format.
+async function loadArchetype(id) {
+  if (!window.MortgageBundle) return;
+  const a = window.MortgageBundle.archetypes.find((x) => x.id === id);
+  if (!a) return;
+  const principal = Number(a.scenario.purchase_price);
+  const downPayment = principal * Number(a.scenario.down_pct) / 100;
+  const input = {
+    principal,
+    downPayment,
+    rate: a.displayedRate,
+    years: Number(a.scenario.term_years),
+  };
+  const hash = await encodeScenario(input);
+  location.hash = 'i=' + hash;
 }
+
+// Mini-header style for "Common scenarios" / "Your saves" subsections within
+// the Pick-a-scenario row. Per /sc-cssz-design: --cssz-muted text, uppercase
+// tracking, no padding on SC-measured elements (we're inside the Label's
+// inner content, so this is content-side, fine).
+const PICKER_HEADER_STYLE = "font-size:10px;text-transform:uppercase;letter-spacing:0.08em;" +
+  "color:var(--cssz-muted,#888);padding:8px 8px 4px;";
+const PICKER_ROW_STYLE = "display:flex;justify-content:space-between;align-items:center;" +
+  "padding:5px 8px;text-decoration:none;color:var(--cssz-text,#333);" +
+  "border-bottom:1px solid var(--cssz-border-soft,#eee);";
+const PICKER_ROW_TAGLINE_STYLE = "color:var(--cssz-muted,#888);font-size:11px;margin-top:1px;";
+const PICKER_ROW_MONTHLY_STYLE = "color:var(--cssz-accent,#1976d2);font-weight:500;white-space:nowrap;margin-left:8px;";
+const PICKER_EMPTY_STYLE = "color:var(--cssz-muted,#888);font-size:11px;font-style:italic;padding:6px 8px;";
+
+// Compute monthly P&I for an archetype using the same domain pipeline the
+// calc uses for the result panel. Done at render time per spec (no per-
+// archetype precomputation in the bundle — keeps numbers fresh if domain
+// math evolves).
+function archetypeMonthly(a) {
+  if (!window.MortgageBundle) return null;
+  const principal = Number(a.scenario.purchase_price);
+  const down = principal * Number(a.scenario.down_pct) / 100;
+  const loan = Math.max(0, principal - down);
+  const sched = window.MortgageBundle.amortizationSchedule({
+    loan_amount: loan,
+    note_rate: a.displayedRate,
+    term_years: Number(a.scenario.term_years),
+  });
+  if (!sched.length) return null;
+  return sched[0].principal + sched[0].interest;
+}
+
+function archetypeRow(a) {
+  const m = archetypeMonthly(a);
+  const monthly = m
+    ? `$${m.toLocaleString('en-US', { maximumFractionDigits: 0 })}/mo`
+    : '';
+  // onclick dispatcher (not href=javascript:) because computing the hash is
+  // async (encodeScenario uses CompressionStream). The dispatcher handles
+  // the await; the link itself is sync.
+  return `<a href='#' onclick='loadArchetype(${JSON.stringify(a.id)});return false;' style='${PICKER_ROW_STYLE}'>` +
+    `<span><div>${escapeHtml(a.name)}</div>` +
+    `<div style='${PICKER_ROW_TAGLINE_STYLE}'>${escapeHtml(a.tagline)}</div></span>` +
+    `<span style='${PICKER_ROW_MONTHLY_STYLE}'>${escapeHtml(monthly)}</span></a>`;
+}
+
+function recentRow(r) {
+  const monthly = r.monthly
+    ? `$${r.monthly.toLocaleString('en-US', { maximumFractionDigits: 0 })}/mo`
+    : '';
+  // void(...) suppresses the assignment's return value — without it, the
+  // browser would render the resulting string as the entire page body
+  // (a classic javascript: URL footgun).
+  return `<a href='javascript:void(location.hash="i=${r.hash}")' style='${PICKER_ROW_STYLE}'>` +
+    `<span>${escapeHtml(r.label)}</span>` +
+    `<span style='${PICKER_ROW_MONTHLY_STYLE}'>${escapeHtml(monthly)}</span></a>`;
+}
+
+// Renders the Pick-a-scenario row: "Common scenarios" subsection (6 archetypes
+// from the bundle) followed by "Your saves" subsection (user recents from
+// localStorage). Both groups use the same row markup; mini-headers carry the
+// distinction. Per spec archetype-picker.md (Q2): no per-row badge.
+function rebuildPicker() {
+  const archs = (window.MortgageBundle && window.MortgageBundle.archetypes) || [];
+  const recents = getRecents();
+  const archHTML = archs.length
+    ? `<div style='${PICKER_HEADER_STYLE}'>Common scenarios</div>` +
+      archs.map(archetypeRow).join('')
+    : '';
+  const recentsHTML =
+    `<div style='${PICKER_HEADER_STYLE}'>Your saves</div>` +
+    (recents.length
+      ? recents.map(recentRow).join('')
+      : `<div style='${PICKER_EMPTY_STYLE}'>Your saves will appear here. Click <b>Save</b> after calculating.</div>`);
+  recentsList.setContents(archHTML + recentsHTML);
+}
+
+// Backward-compat alias: existing call sites use rebuildRecents.
+function rebuildRecents() { rebuildPicker(); }
 
 async function restoreFromHash() {
   const parsed = await parseHash();
@@ -931,11 +1010,11 @@ isc.VLayout.create({
       autoDraw: false  // avoid the "drawn before parent" warning + re-parent quirk
     }),
 
-    isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:var(--cssz-muted,#888);'>Recent scenarios (this device)</div>" }),
+    isc.Label.create({ height: 18, contents: "<div style='font-size:12px;color:var(--cssz-muted,#888);'>Pick a scenario</div>" }),
     // Label defaults to valign:"center" — that pushes a single recent row
     // to the middle of a 200px box. Force top-align so rows stack downward
     // as they're added.
-    isc.Label.create({ ID: "recentsList", height: 200, overflow: "auto",
+    isc.Label.create({ ID: "recentsList", height: 320, overflow: "auto",
                        padding: 0, valign: "top", align: "left", contents: "" })
   ]
 });
