@@ -1310,7 +1310,9 @@ const _formMembers = [
         changed: function() { recalc(); refreshStatus(); } }
     ]
   }),
-  isc.Label.create({ ID: "result", height: 80, padding: 4, overflow: "hidden", contents: "" }),
+  // Handset: result content wraps to 3-4 lines on a 374px-wide column —
+  // 80px clips the PMI line under the action bar. 130 gives breathing room.
+  isc.Label.create({ ID: "result", height: _isHandset ? 130 : 80, padding: 4, overflow: "hidden", contents: "" }),
   isc.HLayout.create({
     ID: "actionBar",
     height: 32,
