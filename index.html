@@ -20,8 +20,16 @@
 <script src="smartclient/system/modules/ISC_DataBinding.js"></script>
 <script src="smartclient/skins/Tahoe/load_skin.js"></script>
 <script src="lib/qrcode.min.js"></script>
+<!-- CSSZ × SmartClient adapter (per packages/forge/skins/modern/evaluation.html).
+     Loads after Tahoe so its variable-driven rules win. theme-modern.css supplies
+     the modern CSSZ vocabulary; toggle dark via document.body.classList.toggle('dark'). -->
+<link rel="stylesheet" href="skin/sc-cssz-adapter.css">
+<link rel="stylesheet" href="skin/theme-modern.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
-<body>
+<body class="sc theme-modern">
 <script>
 // ---- Scenario encoding (per EDGE_SUBSTRATE_ARCHITECTURE.md) -------------
 // Hash-based state on a real route. Hash is never sent to the edge or any

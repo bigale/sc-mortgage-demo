@@ -1,0 +1,350 @@
+/* =============================================================================
+ * SmartClient ↔ CSSZ Adapter (Phase 2 of the CSSZ × SC evaluation)
+ * =============================================================================
+ *
+ * Retargets SmartClient's class-name contract (.button, .toolStrip, .formCell,
+ * .windowHeader, .sectionHeader, .listGridCell, .tabBar, .tab, .tabSelected,
+ * .textItem, .selectItem, .dateChooser, etc.) to read from `var(--cssz-*)`
+ * with SC-ish defaults as fallbacks.
+ *
+ * Load order:
+ *   1) load_skin.js (SC runtime defaults — unchanged)
+ *   2) skin_styles.css (stock SC skin, e.g. EnterpriseSeries)
+ *   3) cssz.css (optional CSSZ engine for non-SC HTML)
+ *   4) sc-cssz-adapter.css (this file)
+ *   5) theme-modern.css (or any other CSSZ vocabulary block)
+ *
+ * Activation: anything inside an element with class `sc` participates. Drop a
+ * CSSZ block on any descendant (inline style or class) to rescope the theme.
+ *
+ * Discipline:
+ *   - Single-class selectors only. SC reads style declarations via CSSOM and
+ *     mishandles multi-class selectors / @-rules. State suffixes are real SC
+ *     class names (.buttonOver, .tabSelected, .listGridCellSelected) — not
+ *     compound selectors like .button.over.
+ *   - No images. Any sprite-image chrome SC paints (scrollbar grips, tab
+ *     scroller arrows, some menu glyphs) is deliberately untouched here;
+ *     patch in a separate stylesheet if needed.
+ * ============================================================================= */
+
+/* ---------- Surface (page background, base text) ---------------------------- */
+
+.sc {
+  background: var(--cssz-bg, transparent);
+  color: var(--cssz-text, inherit);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+}
+.sc, .sc * { box-sizing: border-box; }
+
+.sc .pageBackground {
+  background: var(--cssz-bg, transparent);
+  color: var(--cssz-text, inherit);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+}
+.sc .normal {
+  color: var(--cssz-text, inherit);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+}
+.sc .normalFocused { color: var(--cssz-text, inherit); }
+.sc .normalDisabled {
+  color: var(--cssz-text-mute, var(--cssz-muted, #999));
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+}
+
+/* ---------- Button family --------------------------------------------------- */
+
+.sc .button {
+  background: var(--cssz-button-bg, var(--cssz-surface, #fff));
+  color: var(--cssz-button-text, var(--cssz-text, #000));
+  border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  padding: calc(var(--cssz-pad, 6px) - 2px) calc(var(--cssz-pad, 6px) + 4px);
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer; user-select: none;
+  line-height: 1.4;
+}
+.sc .buttonOver {
+  background: var(--cssz-button-bg-over, var(--cssz-row-over, #f5f5f5));
+  color: var(--cssz-button-text, var(--cssz-text, #000));
+  border: 1px solid var(--cssz-border, #ababab);
+}
+.sc .buttonDown {
+  background: var(--cssz-button-bg-down, var(--cssz-row-over, #ededed));
+  color: var(--cssz-button-text, var(--cssz-text, #000));
+  border: 1px solid var(--cssz-border, #ababab);
+}
+.sc .buttonSelected {
+  background: var(--cssz-row-selected, #e0e7ff);
+  color: var(--cssz-row-selected-text, var(--cssz-text, #000));
+  border: 1px solid var(--cssz-accent, #4f46e5);
+}
+.sc .buttonFocused {
+  background: var(--cssz-button-bg, var(--cssz-surface, #fff));
+  color: var(--cssz-button-text, var(--cssz-text, #000));
+  border: 1px solid var(--cssz-accent, #4f46e5);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--cssz-accent, #4f46e5) 25%, transparent);
+}
+.sc .buttonDisabled {
+  background: var(--cssz-button-bg-disabled, var(--cssz-surface-mute, #f5f5f5));
+  color: var(--cssz-text-mute, var(--cssz-muted, #999));
+  border: 1px solid var(--cssz-border, #ababab);
+}
+.sc .buttonPrimary {
+  background: var(--cssz-accent, #4f46e5);
+  color: var(--cssz-on-accent, #fff);
+  border: 1px solid var(--cssz-accent, #4f46e5);
+}
+
+/* ---------- ToolStrip ------------------------------------------------------- */
+
+.sc .toolStrip {
+  background: var(--cssz-tool-bg, var(--cssz-surface, #fafafa));
+  border-bottom: 1px solid var(--cssz-border, #ababab);
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 8px;
+}
+.sc .toolStripSeparator {
+  background: var(--cssz-border, #ababab);
+  width: 1px; align-self: stretch; margin: 4px;
+}
+.sc .toolStripLabel {
+  color: var(--cssz-muted, #666);
+  font-family: var(--cssz-font, inherit);
+  font-size: calc(var(--cssz-fs, 12px) - 1px);
+  padding: 0 6px;
+}
+
+/* ---------- Window / Dialog ------------------------------------------------- */
+
+.sc .windowBackground {
+  background: var(--cssz-surface, #fff);
+  border: 1px solid var(--cssz-border, #ababab);
+}
+.sc .windowHeader {
+  background: var(--cssz-window-bar-bg, var(--cssz-surface, #fafafa));
+  color: var(--cssz-window-bar-text, var(--cssz-text, #000));
+  border-bottom: 1px solid var(--cssz-border, #ababab);
+  padding: 6px 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.sc .windowHeaderText {
+  color: inherit;
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  font-weight: 600;
+}
+.sc .windowBody {
+  background: var(--cssz-surface, #fff);
+  padding: var(--cssz-pad, 8px);
+}
+.sc .dialogBody {
+  background: var(--cssz-surface, #fff);
+  padding: var(--cssz-pad, 8px);
+}
+
+/* ---------- SectionStack ---------------------------------------------------- */
+
+.sc .sectionStack {
+  background: var(--cssz-surface, #fff);
+  border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
+  overflow: hidden;
+}
+.sc .sectionHeader {
+  background: var(--cssz-section-bg, var(--cssz-surface, #fafafa));
+  color: var(--cssz-section-text, var(--cssz-text, #000));
+  border-bottom: 1px solid var(--cssz-border, #ababab);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  font-weight: 600;
+  padding: 8px 10px;
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; user-select: none;
+}
+.sc .sectionItem {
+  background: var(--cssz-surface, #fff);
+  border-bottom: 1px solid var(--cssz-border-soft, var(--cssz-border, #e5e5e5));
+  padding: 10px 12px;
+}
+
+/* ---------- DynamicForm items ----------------------------------------------- */
+
+.sc .formCell {
+  display: grid; grid-template-columns: 140px 1fr; gap: 8px;
+  padding: 5px 0; align-items: center;
+}
+.sc .formTitle {
+  color: var(--cssz-form-title, var(--cssz-muted, #555));
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  text-align: var(--cssz-form-title-align, left);
+  font-weight: 500;
+}
+.sc .textItem {
+  background: var(--cssz-input-bg, var(--cssz-surface, #fff));
+  color: var(--cssz-text, #000);
+  border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  padding: var(--cssz-input-pad, 6px 8px);
+  width: 100%; outline: none;
+}
+.sc .textAreaItem {
+  background: var(--cssz-input-bg, var(--cssz-surface, #fff));
+  color: var(--cssz-text, #000);
+  border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  padding: var(--cssz-input-pad, 6px 8px);
+  width: 100%; outline: none;
+}
+.sc .selectItem {
+  background: var(--cssz-input-bg, var(--cssz-surface, #fff));
+  color: var(--cssz-text, #000);
+  border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  padding: var(--cssz-input-pad, 6px 8px);
+  padding-right: 22px;
+  width: 100%; outline: none;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M2 3 L5 7 L8 3' fill='none' stroke='%23888' stroke-width='1.5'/></svg>");
+  background-repeat: no-repeat; background-position: right 6px center;
+}
+.sc .textItem:focus,
+.sc .textAreaItem:focus,
+.sc .selectItem:focus {
+  border-color: var(--cssz-accent, #4f46e5);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--cssz-accent, #4f46e5) 25%, transparent);
+}
+.sc .checkboxItem {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+}
+.sc .checkboxItem input[type=checkbox] {
+  accent-color: var(--cssz-accent, #4f46e5);
+  width: 14px; height: 14px; margin: 0;
+}
+
+/* ---------- DateChooser ----------------------------------------------------- */
+
+.sc .dateChooser {
+  background: var(--cssz-surface, #fff);
+  border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
+  padding: 6px;
+  display: inline-block;
+}
+.sc .dateChooserHeader {
+  background: var(--cssz-section-bg, var(--cssz-surface, #fafafa));
+  color: var(--cssz-section-text, var(--cssz-text, #000));
+  border-radius: calc(var(--cssz-radius, 0) - 2px);
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600;
+}
+.sc .dateGrid { display: grid; grid-template-columns: repeat(7, 28px); gap: 0; }
+.sc .dateCell, .sc .dateHead {
+  width: 28px; height: 24px; display: grid; place-items: center;
+  font-size: calc(var(--cssz-fs, 12px) - 1px); cursor: pointer;
+  color: var(--cssz-text, inherit);
+}
+.sc .dateHead { color: var(--cssz-muted, #999); font-weight: 600; cursor: default; }
+.sc .dateCellOver { background: var(--cssz-row-over, #f5f5f5); border-radius: 3px; }
+.sc .dateCellSelected {
+  background: var(--cssz-accent, #4f46e5);
+  color: var(--cssz-on-accent, #fff);
+  border-radius: 3px;
+}
+
+/* ---------- ListGrid -------------------------------------------------------- */
+
+.sc .listGrid {
+  background: var(--cssz-surface, #fff);
+  border: 1px solid var(--cssz-border, #ababab);
+  border-radius: var(--cssz-radius, 0);
+  overflow: hidden;
+}
+.sc .gridHeader {
+  background: var(--cssz-header-bg, var(--cssz-section-bg, var(--cssz-surface, #fafafa)));
+  color: var(--cssz-section-text, var(--cssz-text, #000));
+  border-bottom: 1px solid var(--cssz-border, #ababab);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  font-weight: 600;
+}
+.sc .gridBody { background: var(--cssz-surface, #fff); }
+.sc .gridRow { border-bottom: 1px solid var(--cssz-border-soft, var(--cssz-border, #e5e5e5)); cursor: pointer; }
+.sc .gridRowOver { background: var(--cssz-row-over, #f5f5f5); }
+.sc .gridRowSelected {
+  background: var(--cssz-row-selected, #e0e7ff);
+  color: var(--cssz-row-selected-text, var(--cssz-text, #000));
+}
+.sc .listGridCell {
+  color: var(--cssz-text, inherit);
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  padding: 6px 10px;
+}
+.sc .listGridCellSelected {
+  background: var(--cssz-row-selected, #e0e7ff);
+  color: var(--cssz-row-selected-text, var(--cssz-text, #000));
+}
+.sc .listGridCellOver { background: var(--cssz-row-over, #f5f5f5); }
+.sc .listGridCellSelectedOver {
+  background: var(--cssz-row-selected, #e0e7ff);
+  color: var(--cssz-row-selected-text, var(--cssz-text, #000));
+}
+
+/* ---------- TabSet ---------------------------------------------------------- */
+
+.sc .tabBar {
+  background: var(--cssz-tab-bg, transparent);
+  border-bottom: 1px solid var(--cssz-border, #ababab);
+  display: flex; padding: 0;
+}
+.sc .tab {
+  background: transparent;
+  color: var(--cssz-tab-text, var(--cssz-muted, #666));
+  border: 1px solid transparent;
+  border-bottom: 0;
+  cursor: pointer;
+  font-family: var(--cssz-font, inherit);
+  font-size: var(--cssz-fs, inherit);
+  padding: 6px 14px;
+  border-radius: var(--cssz-radius, 0) var(--cssz-radius, 0) 0 0;
+  position: relative; top: 1px;
+}
+.sc .tabSelected {
+  background: var(--cssz-tab-selected-bg, var(--cssz-surface, #fff));
+  color: var(--cssz-tab-selected-text, var(--cssz-text, #000));
+  border-color: var(--cssz-border, #ababab);
+  box-shadow: 0 -2px 0 var(--cssz-accent, #4f46e5) inset;
+  font-weight: 600;
+}
+.sc .tabBody {
+  background: var(--cssz-surface, #fff);
+  border: 1px solid var(--cssz-border, #ababab);
+  border-top: 0;
+  border-radius: 0 0 var(--cssz-radius, 0) var(--cssz-radius, 0);
+  padding: 14px;
+}
+
+/* ---------- Icon base (currentColor is themable via --cssz-icon) ----------- */
+
+.sc .icon {
+  color: var(--cssz-icon, currentColor);
+  width: 14px; height: 14px;
+  display: inline-block; flex: none;
+}
