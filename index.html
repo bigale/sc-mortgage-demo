@@ -20,6 +20,11 @@
 <script src="smartclient/system/modules/ISC_DataBinding.js"></script>
 <script src="smartclient/skins/Tahoe/load_skin.js"></script>
 <script src="lib/qrcode.min.js"></script>
+<!-- Mortgage domain bundle (built by ddd-apps via `npm run build:mortgage-bundle`,
+     synced via `npm run sync:mortgage-bundle`). Exposes window.MortgageBundle
+     with mortgageDomain + applyDerivations + applyVirtualParams + validateScenario
+     + amortizationSchedule. See ddd-apps/docs/contexts/mortgage/specs/wire-domain-into-calc.md. -->
+<script src="lib/mortgage-bundle.js"></script>
 <!-- CSSZ × SmartClient adapter (per packages/forge/skins/modern/evaluation.html).
      Loads after Tahoe so its variable-driven rules win. theme-modern.css supplies
      the modern CSSZ vocabulary; toggle dark via document.body.classList.toggle('dark'). -->
@@ -242,16 +247,50 @@ async function saveRecent(input, output) {
 }
 
 // ---- Math ------------------------------------------------------------------
+// inputToScenarioRow — adapter from calc's 4-input shape to the mortgage
+// domain's full ScenarioRow. Defaults: Conventional / Good / SFH / Primary /
+// StandardCost / FixedRate / 0 points / Current. note_rate is set explicitly
+// from user input — bypasses the domain's note_rate-from-rate_environment
+// derivation (which is a fallback when note_rate is undefined).
+// Per spec wire-domain-into-calc.md (Q3, /domain 2026-05-02): adapter lives
+// calc-side because calc is the only consumer of the 4-input shape.
+function inputToScenarioRow(input) {
+  const p = input.principal || 0;
+  const dp = Math.min(input.downPayment || 0, p);  // cap at principal
+  return {
+    purchase_price: p,
+    down_pct: p > 0 ? (dp / p) * 100 : 0,
+    term_years: input.years || 0,
+    note_rate: input.rate || 0,         // user-input rate is authoritative
+    // Hidden defaults (8 unsurfaced parameters)
+    loan_type: "Conventional",
+    credit_tier: "Good",
+    property_type: "SFH",
+    occupancy: "Primary",
+    region: "StandardCost",
+    rate_structure: "FixedRate",
+    points: 0,
+    rate_environment: "Current",        // ignored when note_rate is set
+  };
+}
+
 function calculate(input) {
   const p = input.principal, dp = input.downPayment || 0;
   const loan = Math.max(0, p - dp);
-  const r = input.rate / 100 / 12;
+  if (loan <= 0 || (input.rate || 0) <= 0 || (input.years || 0) <= 0) return null;
+  // Run through the mortgage domain pipeline. Per spec, the calc keeps its
+  // own PMI formula (calc-side, simpler) for v1 — domain's mortgage_insurance
+  // computes but we ignore it here. validateScenario also runs to exercise
+  // the wiring (we don't surface its result in v1; deferred to form-expansion).
+  const MB = window.MortgageBundle;
+  const row = inputToScenarioRow(input);
+  const derived = MB.applyDerivations(MB.applyVirtualParams(row, MB.mortgageDomain.virtualParameters || []), MB.mortgageDomain.derivations);
+  MB.validateScenario(derived, MB.mortgageDomain.constraints);  // exercise wiring; result intentionally unused
+  const monthly = Number(derived.monthly_pi);
   const n = input.years * 12;
-  if (loan <= 0 || r <= 0 || n <= 0) return null;
-  const monthly = (loan * r) / (1 - Math.pow(1 + r, -n));
   const total = monthly * n;
   const interest = total - loan;
-  // PMI: typical lender estimate ~0.5%/yr of loan when down < 20%
+  // PMI stays calc-side (simpler flat 0.5%/yr formula) for v1.
   const dpPct = p > 0 ? (dp / p) : 0;
   const pmi = dpPct < 0.20 ? (loan * 0.005 / 12) : 0;
   return { monthly, total, interest, loan, dpPct, pmi };
@@ -344,20 +383,17 @@ function playLoadAnimation() {
 // Stacked area: per-month payment composition (interest dominant early,
 // principal dominant late — the classic mortgage education moment).
 function buildAmortization(input) {
+  // Delegate to the mortgage bundle's amortizationSchedule (a sibling helper
+  // to mortgageDomain — not a Derivation, see spec Q1). Returns the same
+  // {month, year, principal, interest, balance} shape; chart code uses
+  // {principal, interest} only.
   const loan = Math.max(0, input.principal - (input.downPayment || 0));
-  const monthlyRate = input.rate / 100 / 12;
-  const n = input.years * 12;
-  if (loan <= 0 || monthlyRate <= 0 || n <= 0) return [];
-  const monthly = (loan * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -n));
-  let balance = loan;
-  const out = [];
-  for (let m = 1; m <= n; m++) {
-    const interest = balance * monthlyRate;
-    const principal = monthly - interest;
-    balance -= principal;
-    out.push({ month: m, year: m / 12, principal, interest });
-  }
-  return out;
+  if (loan <= 0 || (input.rate || 0) <= 0 || (input.years || 0) <= 0) return [];
+  return window.MortgageBundle.amortizationSchedule({
+    loan_amount: loan,
+    note_rate: input.rate,
+    term_years: input.years,
+  });
 }
 
 function renderChart(input) {
