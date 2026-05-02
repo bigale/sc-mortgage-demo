@@ -110,6 +110,37 @@
   }
   .cssz-cta a.btn:hover { opacity: 0.9; }
 
+  /* Saves popup (replaces the old "Your saves" bottom row).
+     Plain HTML div anchored to the Save▾ split-button via inline left/top.
+     Uses CSSZ vars so it themes light/dark/tenant for free. */
+  .cssz-saves-menu {
+    position: absolute; z-index: 2147483647;  /* above all SC widgets */
+    background: var(--cssz-surface, #fff);
+    border: 1px solid var(--cssz-border, #ccc);
+    border-radius: var(--cssz-radius, 6px);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--cssz-text, #000) 18%, transparent);
+    overflow: auto; max-height: 320px;
+    padding: 4px 0;
+    font-family: var(--cssz-font, sans-serif);
+  }
+  .cssz-saves-menu-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 12px;
+    text-decoration: none;
+    color: var(--cssz-text, #333);
+    font-size: 13px;
+    border-bottom: 1px solid var(--cssz-border-soft, #eee);
+  }
+  .cssz-saves-menu-row:last-child { border-bottom: none; }
+  .cssz-saves-menu-row:hover {
+    background: var(--cssz-row-over, color-mix(in srgb, var(--cssz-accent, #4f46e5) 8%, var(--cssz-surface, #fff)));
+  }
+  .cssz-saves-menu-empty {
+    color: var(--cssz-muted, #888);
+    font-size: 12px; font-style: italic;
+    padding: 12px;
+  }
+
   /* Section-internal helpers */
   .cssz-section-empty {
     color: var(--cssz-muted, #888); font-size: 12px; padding: 12px;
@@ -1027,15 +1058,73 @@ function rebuildArchetypes() {
   archetypesList.setContents(archs.map(archetypeRow).join(''));
 }
 
-function rebuildSaves() {
-  const recents = getRecents();
-  if (!window.savesList || !savesList.setContents) return;
-  savesList.setContents(
-    recents.length
-      ? recents.map(recentRow).join('')
-      : `<div style='${PICKER_EMPTY_STYLE}'>Your saves will appear here. Click <b>Save</b> after calculating.</div>`
-  );
+// Saves dropdown (replaces the old bottom "Your saves" row, 2026-05-02).
+// Plain HTML popup div anchored to the Save▾ split-button — avoids loading
+// the 1.3MB ISC_Grids module (which contains isc.Menu). Click an item →
+// set location.hash → existing restoreFromHash flow runs.
+function _ensureSavesMenuEl() {
+  let el = document.getElementById('savesMenu');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'savesMenu';
+  el.className = 'cssz-saves-menu';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  // Outside-click dismiss. Capture phase so the menu closes before any
+  // SC handlers fire on whatever else got clicked.
+  document.addEventListener('mousedown', (e) => {
+    if (el.style.display === 'none') return;
+    if (el.contains(e.target)) return;
+    // Don't close when re-clicking the ▾ button (its handler will toggle).
+    const btnEl = document.querySelector('[eventproxy="btnSavesMenu"]');
+    if (btnEl && btnEl.contains(e.target)) return;
+    el.style.display = 'none';
+  }, true);
+  return el;
 }
+
+function openSavesMenu(anchorButton) {
+  const el = _ensureSavesMenuEl();
+  // Toggle off if already open.
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  const recents = getRecents();
+  const body = recents.length
+    ? recents.map((r) => {
+        const monthly = r.monthly
+          ? `<span style='color:var(--cssz-muted,#888);font-size:11px;margin-left:8px;'>$${r.monthly.toLocaleString('en-US', { maximumFractionDigits: 0 })}/mo</span>`
+          : '';
+        // Use button-like onclick so we can hide the menu after navigation.
+        return `<a href='#' class='cssz-saves-menu-row' data-hash='${r.hash}'>` +
+          `<span>${escapeHtml(r.label)}</span>${monthly}</a>`;
+      }).join('')
+    : `<div class='cssz-saves-menu-empty'>No saved scenarios yet — click <b>Save</b> first.</div>`;
+  el.innerHTML = body;
+  // Wire row click handlers (avoid inline onclick + escaping).
+  el.querySelectorAll('.cssz-saves-menu-row').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      el.style.display = 'none';
+      location.hash = 'i=' + a.dataset.hash;
+    });
+  });
+  // Position: below the anchor button, right-aligned to the ▾.
+  // SC's getPageRect returns [left, top, width, height] as an ARRAY, not an
+  // object — destructuring as {} silently gives NaN. Use accessors instead.
+  const btnLeft   = anchorButton.getPageLeft();
+  const btnTop    = anchorButton.getPageTop();
+  const btnWidth  = anchorButton.getWidth();
+  const btnHeight = anchorButton.getHeight();
+  const width = Math.min(320, Math.max(220, window.innerWidth - 16));
+  const left = Math.max(8, Math.min(window.innerWidth - width - 8, btnLeft + btnWidth - width));
+  el.style.left  = left + 'px';
+  el.style.top   = (btnTop + btnHeight + 2) + 'px';
+  el.style.width = width + 'px';
+  el.style.display = 'block';
+}
+
+// Backwards-compat: rebuildSaves is called from save flows. Now a no-op
+// (menu populates lazily on open). Kept so existing call sites don't break.
+function rebuildSaves() {}
 
 // Backward-compat alias: existing call sites use rebuildRecents. Now refreshes
 // both surfaces.
@@ -1226,24 +1315,30 @@ const _formMembers = [
     ID: "actionBar",
     height: 32,
     membersMargin: 6,
-    // Handset: shrink labels so all 4 buttons fit in the narrowed form column.
-    // 4 buttons + 3 margins = ~360px on iPhone SE (375 viewport - 16 padding).
+    // Save is a split-button: main = save action; ▾ = open menu of saved
+    // scenarios to load. The menu replaces the bottom "Your saves" row
+    // (was discoverable to nobody — saves are co-located with the action that
+    // produces them now).
     members: _isHandset
       ? [
-          isc.Button.create({ ID: "btnCalc",        title: "Calc",     width: 70,
+          isc.Button.create({ ID: "btnCalc",        title: "Calc",     width: 60,
             click: function() { recalc(); refreshStatus(); } }),
-          isc.Button.create({ ID: "btnSave",        title: "Save",     width: 70,
+          isc.Button.create({ ID: "btnSave",        title: "Save",     width: 60,
             click: function() { saveScenario(); } }),
-          isc.Button.create({ ID: "btnShareLive",   title: "Live",     width: 70,
+          isc.Button.create({ ID: "btnSavesMenu",   title: "▾",        width: 26,
+            click: function() { openSavesMenu(this); } }),
+          isc.Button.create({ ID: "btnShareLive",   title: "Live",     width: 60,
             click: function() { openShare('live'); } }),
-          isc.Button.create({ ID: "btnShareSnap",   title: "Snapshot", width: 90,
+          isc.Button.create({ ID: "btnShareSnap",   title: "Snap",     width: 70,
             click: function() { openShare('snapshot'); } })
         ]
       : [
           isc.Button.create({ ID: "btnCalc",        title: "Calculate",     width: 100,
             click: function() { recalc(); refreshStatus(); } }),
-          isc.Button.create({ ID: "btnSave",        title: "Save",          width: 80,
+          isc.Button.create({ ID: "btnSave",        title: "Save",          width: 70,
             click: function() { saveScenario(); } }),
+          isc.Button.create({ ID: "btnSavesMenu",   title: "▾",             width: 28,
+            click: function() { openSavesMenu(this); } }),
           isc.Button.create({ ID: "btnShareLive",   title: "Share Live",    width: 100,
             click: function() { openShare('live'); } }),
           isc.Button.create({ ID: "btnShareSnap",   title: "Share Snapshot", width: 130,
@@ -1316,12 +1411,8 @@ const _exploreStack = isc.SectionStack.create({
   autoDraw: false
 });
 
-const _savesMembers = [
-  isc.Label.create({ height: 18,
-    contents: "<div style='font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--cssz-muted,#888);'>Your saves</div>" }),
-  isc.Label.create({ ID: "savesList", height: 160, overflow: "auto",
-                     padding: 0, valign: "top", align: "left", contents: "" }),
-];
+// Saves menu — plain HTML popup created lazily by openSavesMenu().
+// Replaces the old "_savesMembers" bottom row entirely. No SC widget needed.
 
 // Form-and-picker section: HLayout (desktop) wraps two columns; handset
 // flattens into the parent VLayout's members. Saves stays at the root level.
@@ -1364,7 +1455,6 @@ isc.VLayout.create({
     ..._formAndPicker,
     _ctaBanner,
     _exploreStack,
-    ..._savesMembers,
   ]
 });
 
