@@ -411,31 +411,42 @@ function renderChart(input) {
 
 // Loan balance line chart — area + line showing remaining principal over time.
 // Lives in the "Loan balance over time" SectionStack section.
+//
+// SC's SectionStack re-creates section item DOMs on expand/collapse animations
+// (verified via probe — a `data-tag` attribute on the host div was lost across
+// a section close). If we render the SVG into the live DOM, it goes with the
+// orphaned old element. Workaround: build the SVG in a detached <div>, then
+// hand the HTML string to SC via Label.setContents — SC then owns the contents
+// and re-applies them across reflows.
 function renderBalanceChart(input) {
   if (!window.d3) return;
+  if (!window.balanceChartHostLabel || !balanceChartHostLabel.setContents) return;
   const d3 = window.d3;
-  const host = document.getElementById('balanceChartHost');
-  if (!host) return;
   const sched = buildAmortization(input);
-  host.innerHTML = '';
-  if (!sched.length) return;
+  if (!sched.length) {
+    balanceChartHostLabel.setContents("<div id='balanceChartHost' style='width:100%;height:224px;'></div>");
+    return;
+  }
 
-  // Prepend the starting balance (year 0 = full loan).
   const loan = Math.max(0, input.principal - (input.downPayment || 0));
   let balance = loan;
   const data = [{ year: 0, balance: loan }];
   for (const m of sched) { balance -= m.principal; data.push({ year: m.year, balance: Math.max(0, balance) }); }
 
-  const W = host.clientWidth || 480;
-  const H = host.clientHeight || 224;
+  // Fixed viewBox + preserveAspectRatio="none" + 100%/100% sizing on the SVG
+  // means the chart fills any container size SC gives us, even though we built
+  // it in a detached element with no real width.
+  const W = 480, H = 224;
   const margin = { top: 6, right: 8, bottom: 22, left: 56 };
-  const innerW = Math.max(50, W - margin.left - margin.right);
-  const innerH = Math.max(50, H - margin.top - margin.bottom);
+  const innerW = W - margin.left - margin.right;
+  const innerH = H - margin.top - margin.bottom;
 
-  const svg = d3.select(host).append('svg')
+  const tmp = document.createElement('div');
+  const svg = d3.select(tmp).append('svg')
     .attr('class', 'cssz-chart')
     .attr('viewBox', `0 0 ${W} ${H}`)
-    .attr('preserveAspectRatio', 'none');
+    .attr('preserveAspectRatio', 'none')
+    .style('width', '100%').style('height', '100%').style('display', 'block');
   const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
 
   const x = d3.scaleLinear().domain([0, input.years]).range([0, innerW]);
@@ -452,6 +463,10 @@ function renderBalanceChart(input) {
     .call(d3.axisBottom(x).ticks(Math.min(6, input.years)).tickFormat(v => `${v}y`));
   g.append('g').attr('class', 'cssz-axis')
     .call(d3.axisLeft(y).ticks(4).tickFormat(v => `$${(v/1000).toFixed(0)}K`));
+
+  balanceChartHostLabel.setContents(
+    "<div id='balanceChartHost' style='width:100%;height:224px;'>" + tmp.innerHTML + "</div>"
+  );
 }
 
 // ---- Dynamic affiliate CTA ------------------------------------------------
