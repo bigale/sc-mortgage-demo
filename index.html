@@ -390,7 +390,14 @@ function calculate(input) {
   // the wiring (we don't surface its result in v1; deferred to form-expansion).
   const MB = window.MortgageBundle;
   const row = inputToScenarioRow(input);
-  const derived = MB.applyDerivations(MB.applyVirtualParams(row, MB.mortgageDomain.virtualParameters || []), MB.mortgageDomain.derivations);
+  // applyFallbacks resolves subscription bindings (monthly_take_home,
+  // monthly_existing_debts) from their declared fallback parameters before
+  // derivations run. ADR-003 §Decision 3 (ddd-apps). The DTI derivation's
+  // own `r.monthly_take_home ?? num(r.annual_income_fallback)/12` branch
+  // remains as a safety net until that derivation is simplified in a
+  // follow-up; both paths produce identical math.
+  const withFallbacks = MB.applyFallbacks(row, MB.mortgageDomain);
+  const derived = MB.applyDerivations(MB.applyVirtualParams(withFallbacks, MB.mortgageDomain.virtualParameters || []), MB.mortgageDomain.derivations);
   MB.validateScenario(derived, MB.mortgageDomain.constraints);  // exercise wiring; result intentionally unused
   const monthly = Number(derived.monthly_pi);
   const n = input.years * 12;
@@ -635,7 +642,8 @@ function renderDetails(input) {
   if (!window.detailsGrid || !detailsGrid.setContents) return;
   const MB = window.MortgageBundle;
   const row = inputToScenarioRow(input);
-  const withVirtual = MB.applyVirtualParams(row, MB.mortgageDomain.virtualParameters || []);
+  const withFallbacks = MB.applyFallbacks(row, MB.mortgageDomain);
+  const withVirtual = MB.applyVirtualParams(withFallbacks, MB.mortgageDomain.virtualParameters || []);
   const derived = MB.applyDerivations(withVirtual, MB.mortgageDomain.derivations);
 
   const out = calculate(input);
