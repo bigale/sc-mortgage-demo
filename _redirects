@@ -1,0 +1,6 @@
+# W3 cutover (2026-07-24): sc-mortgage-demo is superseded by the unified
+# calculator network site. Permanent redirect preserves backlink equity and
+# shared scenario links: browsers re-apply the URL fragment (#i=/#z=) after
+# the redirect, and the hub island decodes the same hash format.
+# See ddd-apps docs/contexts/automatedinternet/CONTEXT.md Decision 6.
+/* https://automatedinternet.com/calculators/mortgage/ 301

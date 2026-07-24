@@ -1,3 +1,11 @@
+> **FROZEN (2026-07-24).** This deploy is superseded by
+> [automatedinternet.com/calculators/mortgage/](https://automatedinternet.com/calculators/mortgage/)
+> — the same calculator (same domain bundle, full widget parity, shared
+> `#i=`/`#z=` links restore there) inside the unified calculator network.
+> `sc-mortgage-demo.pages.dev` now serves a permanent 301; this repo takes
+> no further commits. Kept reachable for backlink equity; revisit deletion
+> after 12 months (ddd-apps automatedinternet CONTEXT.md Decision 6).
+
 # Mortgage Calculator — SmartClient on Cloudflare Pages
 
 A 40-line standalone HTML page demonstrating a SmartClient app deployed to Cloudflare Pages with **no build, no bundler, no extension** — just raw HTML loading SmartClient modules from the same origin.
